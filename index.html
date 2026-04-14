@@ -49,7 +49,12 @@ header{background:var(--navy);height:60px;display:flex;align-items:center;justif
 .rules-footer{padding:0 28px 24px;display:flex;justify-content:center;}
 .rules-footer-btn{background:var(--navy);color:white;border:none;padding:10px 32px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;transition:background .2s;}
 .rules-footer-btn:hover{background:var(--navy-light);}
-.layout{display:grid;grid-template-columns:290px 1fr;grid-template-rows:1fr 100px;height:calc(100vh - 60px);min-height:540px;}
+.dept-bar{background:var(--navy-light);border-bottom:2px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:4px;padding:0 20px;height:42px;overflow-x:auto;flex-shrink:0;}
+.dept-tab{padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:none;color:rgba(255,255,255,.65);background:transparent;white-space:nowrap;transition:all .15s;}
+.dept-tab:hover{color:white;background:rgba(255,255,255,.12);}
+.dept-tab.active{color:white;background:rgba(255,255,255,.2);box-shadow:inset 0 0 0 1px rgba(255,255,255,.3);}
+.dept-tab-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;}
+.layout{display:grid;grid-template-columns:290px 1fr;grid-template-rows:1fr 100px;height:calc(100vh - 102px);min-height:540px;}
 .left-panel{background:white;border-right:1px solid var(--gray-200);display:flex;flex-direction:column;padding:16px;gap:10px;overflow:hidden;}
 .task-card{background:var(--blue-light);border:1px solid #BFDBFE;border-radius:var(--radius);padding:10px 14px;flex-shrink:0;}
 .card-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--blue);margin-bottom:4px;}
@@ -248,6 +253,9 @@ header{background:var(--navy);height:60px;display:flex;align-items:center;justif
     <button class="btn-admin" onclick="openAdminLogin()">⚙ Admin</button>
   </div>
 </header>
+
+<!-- Department tabs bar -->
+<div class="dept-bar" id="dept-tabs-bar"></div>
 
 <div class="layout">
   <div class="left-panel">
@@ -475,22 +483,18 @@ header{background:var(--navy);height:60px;display:flex;align-items:center;justif
   <div class="admin-container">
     <div class="admin-header">
       <div class="admin-header-left">
-        <div class="admin-header-icon">🔐</div>
+        <div class="admin-header-icon" id="admin-header-icon">🔐</div>
         <div class="admin-header-title">
-          <h2>Admin Dashboard</h2>
-          <p>KPI Hangman — Katalys Accounting</p>
+          <h2 id="admin-header-title">Admin Dashboard</h2>
+          <p id="admin-header-sub">KPI Hangman</p>
         </div>
       </div>
-      <div class="admin-header-right">
+      <div class="admin-header-right" id="admin-header-right">
         <button class="admin-close-btn" onclick="closeAdminDashboard()">✕ Close</button>
       </div>
     </div>
     <div class="admin-tabs" id="admin-tabs">
-      <button class="admin-tab active" onclick="switchTab('puzzle')"   data-tab="puzzle">🎯 Puzzle</button>
-      <button class="admin-tab"        onclick="switchTab('kpis')"     data-tab="kpis">📋 KPI Manager</button>
-      <button class="admin-tab"        onclick="switchTab('audit')"    data-tab="audit">📝 Audit Log</button>
-      <button class="admin-tab"        onclick="switchTab('metrics')"  data-tab="metrics">📊 Metrics</button>
-      <button class="admin-tab"        onclick="switchTab('export')"   data-tab="export">💾 Export</button>
+      <!-- dynamically rendered based on role -->
     </div>
     <div class="admin-content" id="admin-content"></div>
   </div>
@@ -523,6 +527,13 @@ const AVATAR_COLORS = ['#1B3A6B','#2563EB','#7C3AED','#DB2777','#059669','#D9770
 /* ══════════════════════════════════════════
    STATE
 ══════════════════════════════════════════ */
+// Master config — department list
+let MASTER = { departments: [] };
+// Current dept & auth role
+let currentDeptId = '';
+let _authRole = null; // 'super' | deptId (string)
+
+// Per-department game state
 let G = {
   phrase:'', kpiTask:'', kpiDate:'',
   guessedLetters:[], playerData:{}, guesses:[],
@@ -534,15 +545,34 @@ let G = {
 };
 let S = { name:'', unlocked:false, guessed:false, eliminated:false, wrongCount:0, wrongLetters:[] };
 
-// Admin password stored separately so it survives puzzle resets
-function getAdminPw()  { return localStorage.getItem('kpi_hm_admin_pw') || ''; }
-function setAdminPw(p) { localStorage.setItem('kpi_hm_admin_pw', p); }
+// Super admin password
+function getSuperPw()  { return localStorage.getItem('kpi_hm_super_pw') || ''; }
+function setSuperPw(p) { localStorage.setItem('kpi_hm_super_pw', p); }
 
 /* ══════════════════════════════════════════
    PERSISTENCE
 ══════════════════════════════════════════ */
-function save() { try { localStorage.setItem('kpi_hm_v2', JSON.stringify(G)); } catch(e){} }
-function load() { try { const d=localStorage.getItem('kpi_hm_v2'); if(d) G={...G,...JSON.parse(d)}; } catch(e){} }
+function emptyG() {
+  return { phrase:'', kpiTask:'', kpiDate:'', guessedLetters:[], playerData:{}, guesses:[],
+           status:'SETUP', winner:'', auditLog:[], customKPIs:[], disabledKPIs:[], puzzleHistory:[] };
+}
+function saveG() {
+  try { localStorage.setItem(`kpi_hm_dept_${currentDeptId}`, JSON.stringify(G)); } catch(e) {}
+}
+function loadG(deptId) {
+  G = emptyG();
+  try { const d=localStorage.getItem(`kpi_hm_dept_${deptId}`); if(d) G={...G,...JSON.parse(d)}; } catch(e) {}
+}
+function loadGForDept(deptId) {
+  // Read-only load for a dept without switching — used for combined reporting
+  const base = emptyG();
+  try { const d=localStorage.getItem(`kpi_hm_dept_${deptId}`); if(d) return {...base,...JSON.parse(d)}; } catch(e) {}
+  return base;
+}
+function saveMaster() { try { localStorage.setItem('kpi_hm_master', JSON.stringify(MASTER)); } catch(e) {} }
+function loadMaster() {
+  try { const d=localStorage.getItem('kpi_hm_master'); if(d) MASTER={...MASTER,...JSON.parse(d)}; } catch(e) {}
+}
 
 /* ══════════════════════════════════════════
    ACTIVE KPI TASK LIST
@@ -553,12 +583,73 @@ function getActiveTasks() {
 }
 
 /* ══════════════════════════════════════════
+   DEPT HELPERS
+══════════════════════════════════════════ */
+function getDept(id) { return MASTER.departments.find(d=>d.id===id); }
+function getDeptColor(id) { const d=getDept(id); return d?d.color:'#1B3A6B'; }
+
+function renderDeptTabs() {
+  const bar = document.getElementById('dept-tabs-bar');
+  bar.innerHTML = '';
+  MASTER.departments.forEach(dept => {
+    const btn = document.createElement('button');
+    btn.className = 'dept-tab' + (dept.id === currentDeptId ? ' active' : '');
+    btn.innerHTML = `<span class="dept-tab-dot" style="background:${dept.color}"></span>${escHtml(dept.name)}`;
+    btn.onclick = () => switchDept(dept.id);
+    bar.appendChild(btn);
+  });
+}
+
+function switchDept(deptId) {
+  if (deptId === currentDeptId) return;
+  saveG();
+  currentDeptId = deptId;
+  loadG(deptId);
+  S = { name:'', unlocked:false, guessed:false, eliminated:false, wrongCount:0, wrongLetters:[] };
+  resetPortal();
+  renderDeptTabs();
+  // Update game header subtitle
+  const dept = getDept(deptId);
+  if (dept) document.querySelector('.logo p').textContent = dept.name;
+  if (!G.phrase || G.status==='SETUP') { render(); }
+  else render();
+}
+
+function resetPortal() {
+  ['player-name','kpi-response'].forEach(id=>{const el=document.getElementById(id);if(el){el.value='';el.disabled=false;}});
+  const btn=document.getElementById('submit-kpi-btn');if(btn){btn.textContent='Submit & Unlock';btn.disabled=false;}
+  const st=document.getElementById('portal-status');if(st){st.style.display='none';st.textContent='';}
+  const pi=document.getElementById('phrase-input');if(pi)pi.value='';
+}
+
+/* ══════════════════════════════════════════
    INIT
 ══════════════════════════════════════════ */
 function init() {
-  load();
+  loadMaster();
+
+  // ── Migration: first-time setup ──
+  if (!MASTER.departments.length) {
+    MASTER.departments = [
+      { id:'accounting', name:'Accounting', color:'#1B3A6B', managerPw:'' }
+    ];
+    // Migrate old game data
+    const oldG = localStorage.getItem('kpi_hm_v2');
+    if (oldG) localStorage.setItem('kpi_hm_dept_accounting', oldG);
+    // Migrate old admin pw → super pw
+    const oldPw = localStorage.getItem('kpi_hm_admin_pw');
+    if (oldPw && !getSuperPw()) setSuperPw(oldPw);
+    saveMaster();
+  }
+
+  currentDeptId = MASTER.departments[0].id;
+  loadG(currentDeptId);
+
   document.getElementById('date-display').textContent =
     new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+  const dept = getDept(currentDeptId);
+  if (dept) document.querySelector('.logo p').textContent = dept.name;
+
   const kb = document.getElementById('keyboard');
   KEY_ROWS.forEach(row => {
     const rowEl = document.createElement('div'); rowEl.className='key-row';
@@ -570,7 +661,9 @@ function init() {
   });
   document.getElementById('phrase-input').addEventListener('keydown', e=>{ if(e.key==='Enter') submitPhraseGuess(); });
   document.getElementById('admin-password-input').addEventListener('keydown', e=>{ if(e.key==='Enter') handleAdminLogin(); });
-  if (!G.phrase || G.status==='SETUP') openPuzzleModal();
+
+  renderDeptTabs();
+  if (!G.phrase || G.status==='SETUP') render();
   else render();
 }
 
@@ -695,7 +788,7 @@ function submitKPI() {
 
   S.name=name; S.unlocked=true; S.guessed=alreadyToday;
   S.eliminated=pd.eliminated; S.wrongCount=pd.wrongCount; S.wrongLetters=[...pd.wrongLetters];
-  save();
+  saveG();
   document.getElementById('player-name').disabled=true;
   document.getElementById('kpi-response').disabled=true;
   document.getElementById('submit-kpi-btn').disabled=true;
@@ -717,7 +810,7 @@ function guessLetter(letter) {
   if(correct){G.guessedLetters.push(letter);setTimeout(()=>{document.querySelectorAll('.cell-char.blank').forEach(el=>{if(el.textContent===letter){el.classList.remove('blank');el.classList.add('pop');}});},10);}
   else{S.wrongLetters.push(letter);S.wrongCount++;persistPlayerData();shakeHangman();checkElimination();}
   G.guesses.push({player:S.name,type:'LETTER',value:letter,correct,dateStr:todayStr(),ts:Date.now()});
-  S.guessed=true;checkWin();save();render();
+  S.guessed=true;checkWin();saveG();render();
 }
 function submitPhraseGuess() {
   if(!S.unlocked||S.guessed||S.eliminated||G.status!=='PLAYING') return;
@@ -727,7 +820,7 @@ function submitPhraseGuess() {
   S.guessed=true;
   if(correct){G.status='WON';G.winner=S.name;G.guessedLetters=[...new Set(G.phrase.toUpperCase().split('').filter(c=>c!==' '))];}
   else{S.wrongLetters.push('?');S.wrongCount++;persistPlayerData();shakeHangman();checkElimination();showStatus(`❌ Not quite, ${S.name}! ${MAX_WRONG-S.wrongCount} live${MAX_WRONG-S.wrongCount===1?'':'s'} remaining.`,'locked');}
-  input.value='';checkWin();save();render();
+  input.value='';checkWin();saveG();render();
   if(G.status==='WON') setTimeout(()=>showWinOverlay(true),400);
 }
 function persistPlayerData() {
@@ -735,7 +828,7 @@ function persistPlayerData() {
   if(!G.playerData[k]) G.playerData[k]={wrongCount:0,wrongLetters:[],eliminated:false};
   G.playerData[k].wrongCount=S.wrongCount;G.playerData[k].wrongLetters=[...S.wrongLetters];G.playerData[k].eliminated=S.eliminated;
 }
-function checkElimination() { if(S.wrongCount>=MAX_WRONG&&!S.eliminated){S.eliminated=true;persistPlayerData();save();setTimeout(()=>showEliminatedOverlay(),350);} }
+function checkElimination() { if(S.wrongCount>=MAX_WRONG&&!S.eliminated){S.eliminated=true;persistPlayerData();saveG();setTimeout(()=>showEliminatedOverlay(),350);} }
 function checkWin() {
   if(G.status!=='PLAYING') return;
   const letters=[...new Set(G.phrase.toUpperCase().split('').filter(c=>c!==' '))];
@@ -783,7 +876,7 @@ function startNewPuzzle() {
   const btn=document.getElementById('submit-kpi-btn');btn.textContent='Submit & Unlock';btn.disabled=false;
   const st=document.getElementById('portal-status');st.style.display='none';st.textContent='';
   document.getElementById('phrase-input').value='';document.getElementById('admin-phrase').value='';
-  save();document.getElementById('puzzle-modal').classList.remove('open');render();
+  saveG();document.getElementById('puzzle-modal').classList.remove('open');render();
 }
 
 /* ══════════════════════════════════════════
@@ -805,12 +898,16 @@ function handleRulesBackdrop(e) {
 let _pendingAdminTarget = null;
 function openAdminLogin(target) {
   _pendingAdminTarget = target || 'dashboard';
-  const pw = getAdminPw();
-  const isSetup = !pw;
-  document.getElementById('login-title').textContent  = isSetup ? '🔐 Set Admin Password' : '🔐 Admin Login';
-  document.getElementById('login-sub').textContent    = isSetup ? 'Create a password to protect the admin dashboard.' : 'Enter your admin password to access the dashboard.';
-  document.getElementById('login-label').textContent  = isSetup ? 'Create Password' : 'Password';
-  document.getElementById('login-btn').textContent    = isSetup ? 'Set Password & Enter' : 'Enter Dashboard';
+  const superPw = getSuperPw();
+  const dept = getDept(currentDeptId);
+  const deptHasPw = dept && dept.managerPw;
+  const isFirstTime = !superPw;
+  document.getElementById('login-title').textContent  = isFirstTime ? '🔐 Create Super Admin Password' : '🔐 Admin Login';
+  document.getElementById('login-sub').textContent    = isFirstTime
+    ? 'Create your super admin password. You can add departments and assign managers from the dashboard.'
+    : `Enter your super admin password, or the manager password for ${dept?dept.name:'this department'}.`;
+  document.getElementById('login-label').textContent  = isFirstTime ? 'Create Super Admin Password' : 'Password';
+  document.getElementById('login-btn').textContent    = isFirstTime ? 'Set Password & Enter' : 'Login';
   document.getElementById('login-error').style.display='none';
   document.getElementById('admin-password-input').value='';
   document.getElementById('admin-login-modal').classList.add('open');
@@ -820,22 +917,38 @@ function closeAdminLogin(){document.getElementById('admin-login-modal').classLis
 function handleAdminLogin() {
   const entered = document.getElementById('admin-password-input').value.trim();
   if(!entered) return;
-  const stored = getAdminPw();
-  if(!stored){
-    // First time — save password and proceed
-    setAdminPw(entered);
+  const superPw = getSuperPw();
+
+  // First time — create super admin password
+  if(!superPw){
+    setSuperPw(entered);
+    _authRole = 'super';
     closeAdminLogin();
     proceedAfterLogin();
-  } else {
-    if(entered === stored){
-      closeAdminLogin();
-      proceedAfterLogin();
-    } else {
-      document.getElementById('login-error').style.display='block';
-      document.getElementById('admin-password-input').value='';
-      document.getElementById('admin-password-input').focus();
-    }
+    return;
   }
+
+  // Check super admin password
+  if(entered === superPw){
+    _authRole = 'super';
+    closeAdminLogin();
+    proceedAfterLogin();
+    return;
+  }
+
+  // Check dept manager password for currently-viewed dept
+  const dept = getDept(currentDeptId);
+  if(dept && dept.managerPw && entered === dept.managerPw){
+    _authRole = currentDeptId;
+    closeAdminLogin();
+    proceedAfterLogin();
+    return;
+  }
+
+  // Wrong
+  document.getElementById('login-error').style.display='block';
+  document.getElementById('admin-password-input').value='';
+  document.getElementById('admin-password-input').focus();
 }
 function proceedAfterLogin() {
   if(_pendingAdminTarget === 'puzzle') { openPuzzleModal(); }
@@ -847,19 +960,61 @@ function proceedAfterLogin() {
 ══════════════════════════════════════════ */
 let _activeTab = 'puzzle';
 function openAdminDashboard() {
+  const dept = getDept(currentDeptId);
+  const isSuper = _authRole === 'super';
+
+  // Update header
+  document.getElementById('admin-header-icon').textContent = isSuper ? '⭐' : '🔐';
+  document.getElementById('admin-header-title').textContent = isSuper ? 'Super Admin Dashboard' : `${dept?dept.name:''} Manager Dashboard`;
+  document.getElementById('admin-header-sub').textContent = isSuper ? 'Full access — all departments' : `${dept?dept.name:''} · Manager access`;
+
+  // Add dept switcher to header for super admin
+  const headerRight = document.getElementById('admin-header-right');
+  headerRight.innerHTML = '';
+  if (isSuper && MASTER.departments.length > 1) {
+    const sel = document.createElement('select');
+    sel.style.cssText='padding:5px 10px;border-radius:6px;font-size:12px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.15);color:white;cursor:pointer;';
+    MASTER.departments.forEach(d=>{
+      const opt=document.createElement('option');opt.value=d.id;opt.textContent=d.name;
+      if(d.id===currentDeptId)opt.selected=true;sel.appendChild(opt);
+    });
+    sel.onchange=()=>{ switchDept(sel.value); loadG(sel.value); currentDeptId=sel.value; switchTab(_activeTab); };
+    headerRight.appendChild(sel);
+  }
+  const closeBtn = document.createElement('button');
+  closeBtn.className='admin-close-btn';closeBtn.textContent='✕ Close';closeBtn.onclick=closeAdminDashboard;
+  headerRight.appendChild(closeBtn);
+
+  // Render tabs
+  const tabsEl = document.getElementById('admin-tabs');
+  tabsEl.innerHTML = `
+    <button class="admin-tab" onclick="switchTab('puzzle')"   data-tab="puzzle">🎯 Puzzle</button>
+    <button class="admin-tab" onclick="switchTab('kpis')"     data-tab="kpis">📋 KPI Manager</button>
+    <button class="admin-tab" onclick="switchTab('audit')"    data-tab="audit">📝 Audit Log</button>
+    <button class="admin-tab" onclick="switchTab('metrics')"  data-tab="metrics">📊 Metrics</button>
+    <button class="admin-tab" onclick="switchTab('export')"   data-tab="export">💾 Export</button>
+    ${isSuper ? `
+    <button class="admin-tab" onclick="switchTab('departments')" data-tab="departments">🏢 Departments</button>
+    <button class="admin-tab" onclick="switchTab('combined')"    data-tab="combined">📊 Combined</button>` : ''}`;
+
   document.getElementById('admin-dashboard').classList.add('open');
   switchTab('puzzle');
 }
-function closeAdminDashboard(){document.getElementById('admin-dashboard').classList.remove('open');}
+function closeAdminDashboard(){
+  document.getElementById('admin-dashboard').classList.remove('open');
+  _authRole = null;
+}
 function switchTab(tab) {
   _activeTab=tab;
   document.querySelectorAll('.admin-tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   const content=document.getElementById('admin-content');
-  if(tab==='puzzle')  content.innerHTML=renderPuzzleTab();
-  if(tab==='kpis')    content.innerHTML=renderKPIsTab();
-  if(tab==='audit')   content.innerHTML=renderAuditTab();
-  if(tab==='metrics') content.innerHTML=renderMetricsTab();
-  if(tab==='export')  content.innerHTML=renderExportTab();
+  if(tab==='puzzle')      content.innerHTML=renderPuzzleTab();
+  if(tab==='kpis')        content.innerHTML=renderKPIsTab();
+  if(tab==='audit')       content.innerHTML=renderAuditTab();
+  if(tab==='metrics')     content.innerHTML=renderMetricsTab();
+  if(tab==='export')      content.innerHTML=renderExportTab();
+  if(tab==='departments') content.innerHTML=renderDepartmentsTab();
+  if(tab==='combined')    content.innerHTML=renderCombinedTab();
 }
 
 /* ── PUZZLE TAB ── */
@@ -942,14 +1097,14 @@ function addCustomKPI() {
   const input=document.getElementById('new-kpi-input');
   const val=input.value.trim();if(!val)return;
   if(!G.customKPIs) G.customKPIs=[];
-  G.customKPIs.push(val);input.value='';save();switchTab('kpis');
+  G.customKPIs.push(val);input.value='';saveG();switchTab('kpis');
 }
-function removeCustomKPI(i){if(!G.customKPIs)return;G.customKPIs.splice(i,1);save();switchTab('kpis');}
+function removeCustomKPI(i){if(!G.customKPIs)return;G.customKPIs.splice(i,1);saveG();switchTab('kpis');}
 function toggleBuiltinKPI(task){
   if(!G.disabledKPIs)G.disabledKPIs=[];
   const idx=G.disabledKPIs.indexOf(task);
   if(idx>=0)G.disabledKPIs.splice(idx,1);else G.disabledKPIs.push(task);
-  save();switchTab('kpis');
+  saveG();switchTab('kpis');
 }
 
 /* ── AUDIT LOG TAB ── */
@@ -1043,6 +1198,157 @@ function renderMetricsTab() {
         <div class="prog-bar-bg"><div class="prog-bar-fill" style="width:${Math.round(count/maxTask*100)}%"></div></div>
       </div>`).join('')}
     </div>`}`;
+}
+
+/* ── DEPARTMENTS TAB (super admin only) ── */
+function renderDepartmentsTab() {
+  const depts = MASTER.departments;
+  return `
+    <div class="section-header">Departments (${depts.length})</div>
+    <div style="background:var(--blue-light);border:1px solid #BFDBFE;border-radius:10px;padding:12px 16px;font-size:12px;color:#1e40af;margin-bottom:20px">
+      💡 Each department gets its own game, KPI list, and reporting. Managers can only see their own department.
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:28px">
+      ${depts.map(d=>`
+        <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <div style="width:16px;height:16px;border-radius:50%;background:${d.color};flex-shrink:0"></div>
+          <div style="flex:1;min-width:140px">
+            <div style="font-size:14px;font-weight:700;color:var(--navy)">${escHtml(d.name)}</div>
+            <div style="font-size:11px;color:var(--gray-500)">ID: ${d.id} · Manager PW: ${d.managerPw ? '••••••' : '<span style="color:var(--red)">Not set</span>'}</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-ghost" onclick="promptEditDept('${d.id}')">✏️ Edit</button>
+            <button class="btn btn-sm btn-ghost" onclick="promptSetManagerPw('${d.id}')">🔑 Set Manager PW</button>
+            ${depts.length > 1 ? `<button class="btn btn-sm btn-red" onclick="confirmDeleteDept('${d.id}')">🗑 Delete</button>` : ''}
+          </div>
+        </div>`).join('')}
+    </div>
+    <div class="section-header">Add New Department</div>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
+      <div class="portal-field" style="flex:1;min-width:160px">
+        <div class="portal-field-label">Department Name</div>
+        <input type="text" id="new-dept-name" class="portal-input" placeholder="e.g. Sales" style="width:100%"/>
+      </div>
+      <div class="portal-field">
+        <div class="portal-field-label">Colour</div>
+        <input type="color" id="new-dept-color" value="#2563EB" style="width:48px;height:38px;border-radius:8px;border:1px solid var(--gray-200);cursor:pointer;padding:2px"/>
+      </div>
+      <button class="btn btn-primary" onclick="addDepartment()">+ Add Department</button>
+    </div>`;
+}
+
+function addDepartment() {
+  const name = document.getElementById('new-dept-name').value.trim();
+  const color = document.getElementById('new-dept-color').value;
+  if (!name) { document.getElementById('new-dept-name').focus(); return; }
+  const id = name.toLowerCase().replace(/[^a-z0-9]/g,'_').replace(/_+/g,'_');
+  if (MASTER.departments.find(d=>d.id===id)) { alert('A department with that name already exists.'); return; }
+  MASTER.departments.push({ id, name, color, managerPw:'' });
+  saveMaster();
+  switchTab('departments');
+}
+
+function promptEditDept(id) {
+  const dept = getDept(id);
+  if (!dept) return;
+  const name = prompt('Department name:', dept.name);
+  if (!name || !name.trim()) return;
+  const color = prompt('Colour (hex, e.g. #2563EB):', dept.color);
+  dept.name = name.trim();
+  if (color && /^#[0-9a-fA-F]{3,6}$/.test(color.trim())) dept.color = color.trim();
+  saveMaster();
+  renderDeptTabs();
+  switchTab('departments');
+}
+
+function promptSetManagerPw(id) {
+  const dept = getDept(id);
+  if (!dept) return;
+  const pw = prompt(`Set manager password for ${dept.name}:\n(Leave blank to clear)`, '');
+  if (pw === null) return; // cancelled
+  dept.managerPw = pw.trim();
+  saveMaster();
+  switchTab('departments');
+}
+
+function confirmDeleteDept(id) {
+  const dept = getDept(id);
+  if (!dept) return;
+  if (!confirm(`Delete department "${dept.name}"?\n\nThis will permanently remove all game data for this department.`)) return;
+  localStorage.removeItem(`kpi_hm_dept_${id}`);
+  MASTER.departments = MASTER.departments.filter(d=>d.id!==id);
+  saveMaster();
+  if (currentDeptId === id) {
+    currentDeptId = MASTER.departments[0].id;
+    loadG(currentDeptId);
+    renderDeptTabs();
+    render();
+  }
+  switchTab('departments');
+}
+
+/* ── COMBINED REPORTING TAB (super admin only) ── */
+function renderCombinedTab() {
+  // Aggregate across all departments
+  const allLogs = [];
+  const allGuesses = [];
+  const allHistory = [];
+  const playersByDept = {};
+
+  MASTER.departments.forEach(dept => {
+    const dg = loadGForDept(dept.id);
+    (dg.auditLog||[]).forEach(e => allLogs.push({...e, dept:dept.name}));
+    (dg.guesses||[]).forEach(g => allGuesses.push({...g, dept:dept.name}));
+    (dg.puzzleHistory||[]).forEach(p => allHistory.push({...p, dept:dept.name}));
+    playersByDept[dept.name] = Object.keys(dg.playerData||{}).length;
+  });
+
+  const totalSubmissions = allLogs.length;
+  const totalGuesses = allGuesses.length;
+  const correctGuesses = allGuesses.filter(g=>g.correct).length;
+  const winRate = allHistory.length ? Math.round(allHistory.filter(p=>p.won).length/allHistory.length*100) : 0;
+
+  // Per-dept breakdown
+  const deptBreakdown = MASTER.departments.map(dept => {
+    const dg = loadGForDept(dept.id);
+    const logs = dg.auditLog||[];
+    const gss = dg.guesses||[];
+    return { name:dept.name, color:dept.color, submissions:logs.length, guesses:gss.length, players:playersByDept[dept.name]||0 };
+  });
+
+  // Combined leaderboard
+  const lb = {};
+  allLogs.forEach(e=>{const k=e.player.toLowerCase()+'|'+e.dept;if(!lb[k])lb[k]={name:e.player,dept:e.dept,days:0,correct:0};lb[k].days++;});
+  allGuesses.filter(g=>g.correct).forEach(g=>{const k=g.player.toLowerCase()+'|'+g.dept;if(!lb[k])lb[k]={name:g.player,dept:g.dept,days:0,correct:0};lb[k].correct++;});
+  const lbEntries=Object.values(lb).sort((a,b)=>(b.days+b.correct)-(a.days+a.correct)).slice(0,20);
+
+  return `
+    <div class="metric-grid">
+      <div class="metric-card"><div class="mc-value">${MASTER.departments.length}</div><div class="mc-label">Departments</div><div class="mc-sub">Active games</div></div>
+      <div class="metric-card"><div class="mc-value">${totalSubmissions}</div><div class="mc-label">KPI Submissions</div><div class="mc-sub">Across all depts</div></div>
+      <div class="metric-card"><div class="mc-value">${totalGuesses}</div><div class="mc-label">Total Guesses</div><div class="mc-sub">${correctGuesses} correct (${totalGuesses?Math.round(correctGuesses/totalGuesses*100):0}%)</div></div>
+      <div class="metric-card"><div class="mc-value">${winRate}%</div><div class="mc-label">Overall Win Rate</div><div class="mc-sub">${allHistory.filter(p=>p.won).length} of ${allHistory.length} solved</div></div>
+    </div>
+
+    <div class="section-header">Department Breakdown</div>
+    <table class="admin-table" style="margin-bottom:28px">
+      <thead><tr><th>Department</th><th>Players</th><th>KPI Submissions</th><th>Guesses</th></tr></thead>
+      <tbody>${deptBreakdown.map(d=>`<tr>
+        <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${d.color};margin-right:8px"></span><strong>${escHtml(d.name)}</strong></td>
+        <td>${d.players}</td><td>${d.submissions}</td><td>${d.guesses}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+
+    <div class="section-header">Combined Leaderboard (top 20)</div>
+    ${!lbEntries.length ? '<div style="font-size:13px;color:var(--gray-400)">No player data yet.</div>' :
+    `<table class="admin-table">
+      <thead><tr><th>#</th><th>Player</th><th>Department</th><th>Days</th><th>Correct</th></tr></thead>
+      <tbody>${lbEntries.map((p,i)=>`<tr>
+        <td style="font-weight:700;color:var(--navy)">${i+1}</td>
+        <td><strong>${escHtml(p.name)}</strong></td>
+        <td>${escHtml(p.dept)}</td><td>${p.days}</td><td>${p.correct}</td>
+      </tr>`).join('')}</tbody>
+    </table>`}`;
 }
 
 /* ── EXPORT TAB ── */
