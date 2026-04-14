@@ -25,6 +25,30 @@ header{background:var(--navy);height:60px;display:flex;align-items:center;justif
 .date-pill{background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);padding:5px 12px;border-radius:20px;font-size:12px;font-weight:500;}
 .btn-admin{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);color:white;padding:5px 13px;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;transition:background .2s;}
 .btn-admin:hover{background:rgba(255,255,255,.2);}
+.btn-rules{background:var(--gold);border:none;color:var(--navy);padding:5px 13px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;transition:background .2s,transform .1s;}
+.btn-rules:hover{background:#FBBF24;transform:translateY(-1px);}
+
+/* ── RULES MODAL ── */
+.rules-overlay{display:none;position:fixed;inset:0;background:rgba(15,23,42,.7);z-index:150;align-items:center;justify-content:center;backdrop-filter:blur(3px);}
+.rules-overlay.open{display:flex;}
+.rules-modal{background:white;border-radius:20px;width:540px;max-width:94vw;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;}
+.rules-header{background:var(--navy);padding:20px 24px 18px;border-radius:20px 20px 0 0;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+.rules-header-left{display:flex;align-items:center;gap:12px;}
+.rules-header-icon{width:40px;height:40px;background:var(--gold);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;}
+.rules-header-title{color:white;}
+.rules-header-title h2{font-size:17px;font-weight:700;margin:0;}
+.rules-header-title p{font-size:11px;opacity:.6;margin:0;}
+.rules-close{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:white;padding:5px 12px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;transition:background .2s;}
+.rules-close:hover{background:rgba(255,255,255,.25);}
+.rules-body{padding:24px 28px;display:flex;flex-direction:column;gap:18px;}
+.rules-section{display:flex;flex-direction:column;gap:8px;}
+.rules-section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--blue);border-bottom:2px solid var(--blue-light);padding-bottom:5px;}
+.rules-item{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:var(--gray-700);line-height:1.55;}
+.rules-item-icon{font-size:16px;flex-shrink:0;margin-top:1px;}
+.rules-tip{background:var(--blue-light);border:1px solid #BFDBFE;border-radius:10px;padding:12px 16px;font-size:12px;color:#1e40af;line-height:1.55;}
+.rules-footer{padding:0 28px 24px;display:flex;justify-content:center;}
+.rules-footer-btn{background:var(--navy);color:white;border:none;padding:10px 32px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;transition:background .2s;}
+.rules-footer-btn:hover{background:var(--navy-light);}
 .layout{display:grid;grid-template-columns:290px 1fr;grid-template-rows:1fr 100px;height:calc(100vh - 60px);min-height:540px;}
 .left-panel{background:white;border-right:1px solid var(--gray-200);display:flex;flex-direction:column;padding:16px;gap:10px;overflow:hidden;}
 .task-card{background:var(--blue-light);border:1px solid #BFDBFE;border-radius:var(--radius);padding:10px 14px;flex-shrink:0;}
@@ -220,6 +244,7 @@ header{background:var(--navy);height:60px;display:flex;align-items:center;justif
   </div>
   <div class="header-right">
     <div class="date-pill" id="date-display">—</div>
+    <button class="btn-rules" onclick="openRules()">📋 Rules</button>
     <button class="btn-admin" onclick="openAdminLogin()">⚙ Admin</button>
   </div>
 </header>
@@ -321,6 +346,90 @@ header{background:var(--navy);height:60px;display:flex;align-items:center;justif
 </div>
 
 <!-- ══ ADMIN LOGIN MODAL ══ -->
+<!-- ══════════════════════════════════════
+     RULES MODAL
+══════════════════════════════════════ -->
+<div class="rules-overlay" id="rules-overlay" onclick="handleRulesBackdrop(event)">
+  <div class="rules-modal" id="rules-modal">
+    <div class="rules-header">
+      <div class="rules-header-left">
+        <div class="rules-header-icon">📋</div>
+        <div class="rules-header-title">
+          <h2>How to Play</h2>
+          <p>KPI Hangman — Katalys Accounting</p>
+        </div>
+      </div>
+      <button class="rules-close" onclick="closeRules()">✕ Close</button>
+    </div>
+    <div class="rules-body">
+
+      <div class="rules-section">
+        <div class="rules-section-title">🎯 Objective</div>
+        <div class="rules-item">
+          <span class="rules-item-icon">🏆</span>
+          <span>Be the first player to correctly guess the hidden KPI phrase — one letter at a time or by guessing the whole phrase at once.</span>
+        </div>
+      </div>
+
+      <div class="rules-section">
+        <div class="rules-section-title">👤 Getting Started</div>
+        <div class="rules-item">
+          <span class="rules-item-icon">1️⃣</span>
+          <span><strong>Enter your name</strong> in the Player Portal at the bottom of the screen, then click <strong>Join</strong> to enter the game.</span>
+        </div>
+        <div class="rules-item">
+          <span class="rules-item-icon">2️⃣</span>
+          <span><strong>Check in daily</strong> by completing the KPI task shown on the left panel. Your KPI response unlocks your keyboard for that session.</span>
+        </div>
+      </div>
+
+      <div class="rules-section">
+        <div class="rules-section-title">🔤 Making Guesses</div>
+        <div class="rules-item">
+          <span class="rules-item-icon">🔡</span>
+          <span><strong>Letter guesses:</strong> Click any letter on the keyboard to guess it. Correct letters are revealed in green; wrong letters are shown in red and cost you a life.</span>
+        </div>
+        <div class="rules-item">
+          <span class="rules-item-icon">💬</span>
+          <span><strong>Phrase guess:</strong> Type the full phrase in the text box and press <strong>Guess Phrase</strong>. A wrong phrase guess also costs a life — use wisely!</span>
+        </div>
+      </div>
+
+      <div class="rules-section">
+        <div class="rules-section-title">❤️ Lives</div>
+        <div class="rules-item">
+          <span class="rules-item-icon">💚</span>
+          <span>Each player starts with <strong>6 lives</strong>, shown as green dots next to your name. Every wrong guess costs one life.</span>
+        </div>
+        <div class="rules-item">
+          <span class="rules-item-icon">💀</span>
+          <span>Lose all 6 lives and you're <strong>eliminated</strong> — you can still watch but can't make more guesses.</span>
+        </div>
+      </div>
+
+      <div class="rules-section">
+        <div class="rules-section-title">🏅 Winning</div>
+        <div class="rules-item">
+          <span class="rules-item-icon">🎉</span>
+          <span>The player who correctly guesses the full phrase wins the round. A new puzzle starts the next cycle!</span>
+        </div>
+        <div class="rules-item">
+          <span class="rules-item-icon">🔄</span>
+          <span>Puzzles rotate automatically on a bi-monthly schedule. New puzzle, new chance to win!</span>
+        </div>
+      </div>
+
+      <div class="rules-tip">
+        💡 <strong>Pro tip:</strong> Complete your KPI check-in early each day — it unlocks your keyboard so you're ready to guess when it's your turn. Look for common short words like <em>AND, THE, OF</em> to crack the phrase faster!
+      </div>
+
+    </div>
+    <div class="rules-footer">
+      <button class="rules-footer-btn" onclick="closeRules()">Got it — Let's Play! 🎯</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="admin-login-modal">
   <div class="modal" style="max-width:420px">
     <h2 id="login-title">🔐 Admin Login</h2>
@@ -690,6 +799,19 @@ function startNewPuzzle() {
   const st=document.getElementById('portal-status');st.style.display='none';st.textContent='';
   document.getElementById('phrase-input').value='';document.getElementById('admin-phrase').value='';
   save();document.getElementById('puzzle-modal').classList.remove('open');render();
+}
+
+/* ══════════════════════════════════════════
+   RULES MODAL
+══════════════════════════════════════════ */
+function openRules() {
+  document.getElementById('rules-overlay').classList.add('open');
+}
+function closeRules() {
+  document.getElementById('rules-overlay').classList.remove('open');
+}
+function handleRulesBackdrop(e) {
+  if (e.target === document.getElementById('rules-overlay')) closeRules();
 }
 
 /* ══════════════════════════════════════════
