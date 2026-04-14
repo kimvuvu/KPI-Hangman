@@ -968,17 +968,28 @@ function openAdminDashboard() {
   document.getElementById('admin-header-title').textContent = isSuper ? 'Super Admin Dashboard' : `${dept?dept.name:''} Manager Dashboard`;
   document.getElementById('admin-header-sub').textContent = isSuper ? 'Full access — all departments' : `${dept?dept.name:''} · Manager access`;
 
-  // Add dept switcher to header for super admin
+  // Add dept switcher to header for super admin (always shown)
   const headerRight = document.getElementById('admin-header-right');
   headerRight.innerHTML = '';
-  if (isSuper && MASTER.departments.length > 1) {
+  if (isSuper) {
+    const label = document.createElement('span');
+    label.style.cssText='font-size:11px;color:rgba(255,255,255,.6);margin-right:4px;white-space:nowrap;';
+    label.textContent='Viewing:';
+    headerRight.appendChild(label);
     const sel = document.createElement('select');
-    sel.style.cssText='padding:5px 10px;border-radius:6px;font-size:12px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.15);color:white;cursor:pointer;';
+    sel.id = 'admin-dept-select';
+    sel.style.cssText='padding:5px 10px;border-radius:6px;font-size:12px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.15);color:white;cursor:pointer;margin-right:8px;';
     MASTER.departments.forEach(d=>{
       const opt=document.createElement('option');opt.value=d.id;opt.textContent=d.name;
       if(d.id===currentDeptId)opt.selected=true;sel.appendChild(opt);
     });
-    sel.onchange=()=>{ switchDept(sel.value); loadG(sel.value); currentDeptId=sel.value; switchTab(_activeTab); };
+    sel.onchange=()=>{
+      saveG();
+      currentDeptId=sel.value;
+      loadG(sel.value);
+      renderDeptTabs();
+      switchTab(_activeTab);
+    };
     headerRight.appendChild(sel);
   }
   const closeBtn = document.createElement('button');
@@ -1004,15 +1015,25 @@ function closeAdminDashboard(){
   document.getElementById('admin-dashboard').classList.remove('open');
   _authRole = null;
 }
+function deptBanner() {
+  // Shows a "You are editing: [Dept]" banner for super admin on per-dept tabs
+  if (_authRole !== 'super') return '';
+  const dept = getDept(currentDeptId);
+  if (!dept) return '';
+  return `<div style="display:flex;align-items:center;gap:10px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:10px;padding:10px 16px;margin-bottom:20px;font-size:13px;color:#92400E">
+    <span style="font-size:16px">⭐</span>
+    <span><strong>Super Admin:</strong> Currently editing <strong>${escHtml(dept.name)}</strong> department. Use the "Viewing" dropdown above to switch departments.</span>
+  </div>`;
+}
 function switchTab(tab) {
   _activeTab=tab;
   document.querySelectorAll('.admin-tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
   const content=document.getElementById('admin-content');
-  if(tab==='puzzle')      content.innerHTML=renderPuzzleTab();
-  if(tab==='kpis')        content.innerHTML=renderKPIsTab();
-  if(tab==='audit')       content.innerHTML=renderAuditTab();
-  if(tab==='metrics')     content.innerHTML=renderMetricsTab();
-  if(tab==='export')      content.innerHTML=renderExportTab();
+  if(tab==='puzzle')      content.innerHTML=deptBanner()+renderPuzzleTab();
+  if(tab==='kpis')        content.innerHTML=deptBanner()+renderKPIsTab();
+  if(tab==='audit')       content.innerHTML=deptBanner()+renderAuditTab();
+  if(tab==='metrics')     content.innerHTML=deptBanner()+renderMetricsTab();
+  if(tab==='export')      content.innerHTML=deptBanner()+renderExportTab();
   if(tab==='departments') content.innerHTML=renderDepartmentsTab();
   if(tab==='combined')    content.innerHTML=renderCombinedTab();
 }
@@ -1224,27 +1245,37 @@ function renderDepartmentsTab() {
         </div>`).join('')}
     </div>
     <div class="section-header">Add New Department</div>
-    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
-      <div class="portal-field" style="flex:1;min-width:160px">
-        <div class="portal-field-label">Department Name</div>
-        <input type="text" id="new-dept-name" class="portal-input" placeholder="e.g. Sales" style="width:100%"/>
+    <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:12px;padding:18px 20px;margin-bottom:8px">
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
+        <div class="portal-field" style="flex:1;min-width:160px">
+          <div class="portal-field-label">Department Name</div>
+          <input type="text" id="new-dept-name" class="portal-input" placeholder="e.g. Sales" style="width:100%"/>
+        </div>
+        <div class="portal-field">
+          <div class="portal-field-label">Colour</div>
+          <input type="color" id="new-dept-color" value="#2563EB" style="width:48px;height:38px;border-radius:8px;border:1px solid var(--gray-200);cursor:pointer;padding:2px"/>
+        </div>
       </div>
-      <div class="portal-field">
-        <div class="portal-field-label">Colour</div>
-        <input type="color" id="new-dept-color" value="#2563EB" style="width:48px;height:38px;border-radius:8px;border:1px solid var(--gray-200);cursor:pointer;padding:2px"/>
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div class="portal-field" style="flex:1;min-width:200px">
+          <div class="portal-field-label">Manager Password <span style="color:var(--gray-400);font-weight:400;text-transform:none">(optional — can set later)</span></div>
+          <input type="password" id="new-dept-pw" class="portal-input" placeholder="Set a password for the manager" style="width:100%"/>
+        </div>
+        <button class="btn btn-primary" onclick="addDepartment()" style="white-space:nowrap">+ Add Department</button>
       </div>
-      <button class="btn btn-primary" onclick="addDepartment()">+ Add Department</button>
     </div>`;
 }
 
 function addDepartment() {
   const name = document.getElementById('new-dept-name').value.trim();
   const color = document.getElementById('new-dept-color').value;
+  const pw = (document.getElementById('new-dept-pw').value || '').trim();
   if (!name) { document.getElementById('new-dept-name').focus(); return; }
   const id = name.toLowerCase().replace(/[^a-z0-9]/g,'_').replace(/_+/g,'_');
   if (MASTER.departments.find(d=>d.id===id)) { alert('A department with that name already exists.'); return; }
-  MASTER.departments.push({ id, name, color, managerPw:'' });
+  MASTER.departments.push({ id, name, color, managerPw: pw });
   saveMaster();
+  renderDeptTabs();
   switchTab('departments');
 }
 
