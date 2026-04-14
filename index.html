@@ -442,9 +442,13 @@ header{background:var(--navy);height:60px;display:flex;align-items:center;justif
   <div class="modal" style="max-width:420px">
     <h2 id="login-title">🔐 Admin Login</h2>
     <p class="modal-sub" id="login-sub">Enter your admin password to access the dashboard.</p>
+    <div class="form-field" id="login-name-field">
+      <label>Your Name</label>
+      <input type="text" id="admin-login-name" placeholder="Enter your name" autocomplete="off"/>
+    </div>
     <div class="form-field">
       <label id="login-label">Password</label>
-      <input type="password" id="admin-password-input" placeholder="Enter admin password" autocomplete="off"/>
+      <input type="password" id="admin-password-input" placeholder="Enter password" autocomplete="off"/>
     </div>
     <div id="login-error" style="font-size:12px;color:var(--red);margin-bottom:12px;display:none">Incorrect password. Try again.</div>
     <div class="modal-footer">
@@ -527,8 +531,8 @@ const AVATAR_COLORS = ['#1B3A6B','#2563EB','#7C3AED','#DB2777','#059669','#D9770
 /* ══════════════════════════════════════════
    STATE
 ══════════════════════════════════════════ */
-// Master config — department list
-let MASTER = { departments: [] };
+// Master config — department list + login history
+let MASTER = { departments: [], loginLog: [] };
 // Current dept & auth role
 let currentDeptId = '';
 let _authRole = null; // 'super' | deptId (string)
@@ -778,12 +782,15 @@ function submitKPI() {
   const nameKey=name.toLowerCase();
   if(!G.playerData[nameKey]) G.playerData[nameKey]={wrongCount:0,wrongLetters:[],eliminated:false};
   const pd=G.playerData[nameKey];
+  // Check if already guessed today (game guesses)
   const alreadyToday=G.guesses.some(g=>g.player.toLowerCase()===nameKey&&g.dateStr===todayStr());
+  // Check if already submitted KPI today (audit log — separate from game guesses)
+  if(!G.auditLog) G.auditLog=[];
+  const alreadyKPIToday=(G.auditLog).some(e=>e.player.toLowerCase()===nameKey&&e.dateStr===todayStr());
 
-  // ── Add to audit log ──
-  if(!alreadyToday && response) {
-    if(!G.auditLog) G.auditLog=[];
-    G.auditLog.push({ player:name, kpiTask:G.kpiTask||'—', response, dateStr:todayStr(), ts:Date.now() });
+  // ── Add to audit log (once per player per day) ──
+  if(!alreadyKPIToday && response) {
+    G.auditLog.push({ player:name, dept:(getDept(currentDeptId)||{}).name||currentDeptId, kpiTask:G.kpiTask||'(no task set)', response, dateStr:todayStr(), ts:Date.now() });
   }
 
   S.name=name; S.unlocked=true; S.guessed=alreadyToday;
@@ -909,20 +916,30 @@ function openAdminLogin(target) {
   document.getElementById('login-label').textContent  = isFirstTime ? 'Create Super Admin Password' : 'Password';
   document.getElementById('login-btn').textContent    = isFirstTime ? 'Set Password & Enter' : 'Login';
   document.getElementById('login-error').style.display='none';
+  document.getElementById('admin-login-name').value='';
   document.getElementById('admin-password-input').value='';
   document.getElementById('admin-login-modal').classList.add('open');
-  setTimeout(()=>document.getElementById('admin-password-input').focus(),100);
+  setTimeout(()=>document.getElementById('admin-login-name').focus(),100);
 }
 function closeAdminLogin(){document.getElementById('admin-login-modal').classList.remove('open');}
 function handleAdminLogin() {
-  const entered = document.getElementById('admin-password-input').value.trim();
-  if(!entered) return;
+  const loginName = document.getElementById('admin-login-name').value.trim();
+  const entered   = document.getElementById('admin-password-input').value.trim();
+  const errEl     = document.getElementById('login-error');
+
+  if(!loginName) {
+    errEl.textContent='Please enter your name.'; errEl.style.display='block';
+    document.getElementById('admin-login-name').focus(); return;
+  }
+  if(!entered) { document.getElementById('admin-password-input').focus(); return; }
+
   const superPw = getSuperPw();
 
   // First time — create super admin password
   if(!superPw){
     setSuperPw(entered);
     _authRole = 'super';
+    logAdminLogin(loginName, 'super');
     closeAdminLogin();
     proceedAfterLogin();
     return;
@@ -931,6 +948,7 @@ function handleAdminLogin() {
   // Check super admin password
   if(entered === superPw){
     _authRole = 'super';
+    logAdminLogin(loginName, 'super');
     closeAdminLogin();
     proceedAfterLogin();
     return;
@@ -940,15 +958,27 @@ function handleAdminLogin() {
   const dept = getDept(currentDeptId);
   if(dept && dept.managerPw && entered === dept.managerPw){
     _authRole = currentDeptId;
+    logAdminLogin(loginName, 'manager', currentDeptId);
     closeAdminLogin();
     proceedAfterLogin();
     return;
   }
 
   // Wrong
-  document.getElementById('login-error').style.display='block';
+  errEl.textContent='Incorrect password. Try again.'; errEl.style.display='block';
   document.getElementById('admin-password-input').value='';
   document.getElementById('admin-password-input').focus();
+}
+
+function logAdminLogin(name, role, deptId) {
+  if(!MASTER.loginLog) MASTER.loginLog=[];
+  const dept = deptId ? getDept(deptId) : null;
+  MASTER.loginLog.push({
+    name, role, deptId: deptId||'all',
+    deptName: dept ? dept.name : 'Super Admin (all)',
+    ts: Date.now(), dateStr: todayStr()
+  });
+  saveMaster();
 }
 function proceedAfterLogin() {
   if(_pendingAdminTarget === 'puzzle') { openPuzzleModal(); }
@@ -1222,12 +1252,79 @@ function renderMetricsTab() {
 }
 
 /* ── DEPARTMENTS TAB (super admin only) ── */
+let _deptPanel = null; // { type:'edit'|'pw'|'delete', id:string }
+
 function renderDepartmentsTab() {
   const depts = MASTER.departments;
+
+  // ── Inline panel renderer ──
+  let panelHtml = '';
+  if (_deptPanel) {
+    const d = getDept(_deptPanel.id);
+    if (d) {
+      if (_deptPanel.type === 'edit') {
+        panelHtml = `
+          <div style="background:#FFFBEB;border:2px solid var(--gold);border-radius:12px;padding:20px;margin-bottom:20px">
+            <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:14px">✏️ Edit Department — ${escHtml(d.name)}</div>
+            <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
+              <div class="portal-field" style="flex:1;min-width:160px">
+                <div class="portal-field-label">Department Name</div>
+                <input type="text" id="edit-dept-name" class="portal-input" value="${escHtml(d.name)}" style="width:100%"/>
+              </div>
+              <div class="portal-field">
+                <div class="portal-field-label">Colour</div>
+                <input type="color" id="edit-dept-color" value="${d.color}" style="width:48px;height:38px;border-radius:8px;border:1px solid var(--gray-200);cursor:pointer;padding:2px"/>
+              </div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
+              <div class="portal-field" style="flex:1;min-width:180px">
+                <div class="portal-field-label">Manager Name</div>
+                <input type="text" id="edit-mgr-name" class="portal-input" value="${escHtml(d.managerName||'')}" placeholder="e.g. Jane Smith" style="width:100%"/>
+              </div>
+              <div class="portal-field" style="flex:1;min-width:200px">
+                <div class="portal-field-label">Manager Email</div>
+                <input type="email" id="edit-mgr-email" class="portal-input" value="${escHtml(d.managerEmail||'')}" placeholder="e.g. jane@katalys.com" style="width:100%"/>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-primary" onclick="saveEditDept('${d.id}')">Save Changes</button>
+              <button class="btn btn-ghost" onclick="cancelDeptPanel()">Cancel</button>
+            </div>
+          </div>`;
+      } else if (_deptPanel.type === 'pw') {
+        panelHtml = `
+          <div style="background:#FFFBEB;border:2px solid var(--gold);border-radius:12px;padding:20px;margin-bottom:20px">
+            <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:6px">🔑 Set Manager Password — ${escHtml(d.name)}</div>
+            <div style="font-size:12px;color:var(--gray-500);margin-bottom:14px">The manager uses this password to log into their department dashboard. Leave blank to remove access.</div>
+            <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+              <div class="portal-field" style="flex:1;min-width:220px">
+                <div class="portal-field-label">New Password</div>
+                <input type="password" id="edit-dept-pw" class="portal-input" placeholder="Enter new manager password" style="width:100%"/>
+              </div>
+              <button class="btn btn-primary" onclick="saveManagerPw('${d.id}')">Save Password</button>
+              <button class="btn btn-ghost" onclick="cancelDeptPanel()">Cancel</button>
+            </div>
+            ${d.managerPw ? `<div style="margin-top:10px"><button class="btn btn-sm btn-red" onclick="clearManagerPw('${d.id}')">🗑 Remove Password (revoke manager access)</button></div>` : ''}
+          </div>`;
+      } else if (_deptPanel.type === 'delete') {
+        panelHtml = `
+          <div style="background:#FEF2F2;border:2px solid var(--red);border-radius:12px;padding:20px;margin-bottom:20px">
+            <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:6px">🗑 Delete Department — ${escHtml(d.name)}</div>
+            <div style="font-size:13px;color:var(--gray-700);margin-bottom:16px">This will <strong>permanently delete</strong> all game data, KPIs, audit logs, and player history for <strong>${escHtml(d.name)}</strong>. This cannot be undone.</div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-red" onclick="doDeleteDept('${d.id}')">Yes, Delete ${escHtml(d.name)}</button>
+              <button class="btn btn-ghost" onclick="cancelDeptPanel()">Cancel</button>
+            </div>
+          </div>`;
+      }
+    }
+  }
+
   return `
+    ${panelHtml}
     <div class="section-header">Departments (${depts.length})</div>
-    <div style="background:var(--blue-light);border:1px solid #BFDBFE;border-radius:10px;padding:12px 16px;font-size:12px;color:#1e40af;margin-bottom:20px">
-      💡 Each department gets its own game, KPI list, and reporting. Managers can only see their own department.
+    <div style="background:var(--blue-light);border:1px solid #BFDBFE;border-radius:10px;padding:12px 16px;font-size:12px;color:#1e40af;margin-bottom:16px">
+      💡 Each department has its own game, KPI list, and reporting. Managers log in with their department password and only see their own data.
     </div>
     <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:28px">
       ${depts.map(d=>`
@@ -1235,17 +1332,26 @@ function renderDepartmentsTab() {
           <div style="width:16px;height:16px;border-radius:50%;background:${d.color};flex-shrink:0"></div>
           <div style="flex:1;min-width:140px">
             <div style="font-size:14px;font-weight:700;color:var(--navy)">${escHtml(d.name)}</div>
-            <div style="font-size:11px;color:var(--gray-500)">ID: ${d.id} · Manager PW: ${d.managerPw ? '••••••' : '<span style="color:var(--red)">Not set</span>'}</div>
+            <div style="font-size:11px;color:var(--gray-600);margin-top:3px">
+              ${d.managerName ? `👤 ${escHtml(d.managerName)}` : '<span style="color:var(--gray-400)">No manager name set</span>'}
+              ${d.managerEmail ? ` · <a href="mailto:${escHtml(d.managerEmail)}" style="color:var(--blue)">${escHtml(d.managerEmail)}</a>` : ''}
+            </div>
+            <div style="font-size:11px;margin-top:2px">
+              Password: ${d.managerPw
+                ? `<span style="color:var(--green);font-weight:600">✓ Set</span>`
+                : `<span style="color:var(--red);font-weight:600">⚠ Not set — manager cannot log in</span>`}
+            </div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-sm btn-ghost" onclick="promptEditDept('${d.id}')">✏️ Edit</button>
-            <button class="btn btn-sm btn-ghost" onclick="promptSetManagerPw('${d.id}')">🔑 Set Manager PW</button>
-            ${depts.length > 1 ? `<button class="btn btn-sm btn-red" onclick="confirmDeleteDept('${d.id}')">🗑 Delete</button>` : ''}
+            <button class="btn btn-sm btn-ghost" onclick="openDeptPanel('edit','${d.id}')">✏️ Edit</button>
+            <button class="btn btn-sm btn-ghost" onclick="openDeptPanel('pw','${d.id}')">${d.managerPw ? '🔑 Reset PW' : '🔑 Set PW'}</button>
+            ${depts.length > 1 ? `<button class="btn btn-sm btn-red" onclick="openDeptPanel('delete','${d.id}')">🗑 Delete</button>` : ''}
           </div>
         </div>`).join('')}
     </div>
+
     <div class="section-header">Add New Department</div>
-    <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:12px;padding:18px 20px;margin-bottom:8px">
+    <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:12px;padding:18px 20px">
       <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
         <div class="portal-field" style="flex:1;min-width:160px">
           <div class="portal-field-label">Department Name</div>
@@ -1256,65 +1362,112 @@ function renderDepartmentsTab() {
           <input type="color" id="new-dept-color" value="#2563EB" style="width:48px;height:38px;border-radius:8px;border:1px solid var(--gray-200);cursor:pointer;padding:2px"/>
         </div>
       </div>
-      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
+        <div class="portal-field" style="flex:1;min-width:180px">
+          <div class="portal-field-label">Manager Name <span style="color:var(--gray-400);font-weight:400;text-transform:none">(optional)</span></div>
+          <input type="text" id="new-dept-mgr-name" class="portal-input" placeholder="e.g. Jane Smith" style="width:100%"/>
+        </div>
         <div class="portal-field" style="flex:1;min-width:200px">
-          <div class="portal-field-label">Manager Password <span style="color:var(--gray-400);font-weight:400;text-transform:none">(optional — can set later)</span></div>
-          <input type="password" id="new-dept-pw" class="portal-input" placeholder="Set a password for the manager" style="width:100%"/>
+          <div class="portal-field-label">Manager Email <span style="color:var(--gray-400);font-weight:400;text-transform:none">(optional)</span></div>
+          <input type="email" id="new-dept-mgr-email" class="portal-input" placeholder="e.g. jane@katalys.com" style="width:100%"/>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div class="portal-field" style="flex:1;min-width:220px">
+          <div class="portal-field-label">Manager Password <span style="color:var(--gray-400);font-weight:400;text-transform:none">(can set later)</span></div>
+          <input type="password" id="new-dept-pw" class="portal-input" placeholder="Password for the manager" style="width:100%"/>
         </div>
         <button class="btn btn-primary" onclick="addDepartment()" style="white-space:nowrap">+ Add Department</button>
       </div>
-    </div>`;
+    </div>
+
+    <div class="section-header" style="margin-top:28px">Admin Login History</div>
+    ${!(MASTER.loginLog||[]).length ? '<div style="font-size:13px;color:var(--gray-400)">No logins recorded yet.</div>' : `
+    <table class="admin-table">
+      <thead><tr><th>Date</th><th>Name</th><th>Role</th><th>Department</th></tr></thead>
+      <tbody>
+        ${[...(MASTER.loginLog||[])].reverse().slice(0,50).map(l=>`<tr>
+          <td style="white-space:nowrap;color:var(--gray-500)">${l.dateStr} <span style="font-size:10px;color:var(--gray-400)">${new Date(l.ts).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</span></td>
+          <td><strong>${escHtml(l.name)}</strong></td>
+          <td>${l.role==='super' ? '<span style="color:var(--gold);font-weight:700">⭐ Super Admin</span>' : '<span style="color:var(--blue);font-weight:600">🔐 Manager</span>'}</td>
+          <td>${escHtml(l.deptName||l.deptId)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`}`;
+}
+
+function openDeptPanel(type, id) { _deptPanel = { type, id }; switchTab('departments'); }
+function cancelDeptPanel() { _deptPanel = null; switchTab('departments'); }
+
+function saveEditDept(id) {
+  const dept = getDept(id);
+  if (!dept) return;
+  const name = document.getElementById('edit-dept-name').value.trim();
+  const color = document.getElementById('edit-dept-color').value;
+  if (!name) { document.getElementById('edit-dept-name').focus(); return; }
+  dept.name = name;
+  dept.color = color;
+  dept.managerName  = document.getElementById('edit-mgr-name').value.trim();
+  dept.managerEmail = document.getElementById('edit-mgr-email').value.trim();
+  saveMaster();
+  renderDeptTabs();
+  _deptPanel = null;
+  switchTab('departments');
+}
+
+function saveManagerPw(id) {
+  const dept = getDept(id);
+  if (!dept) return;
+  const pw = document.getElementById('edit-dept-pw').value.trim();
+  dept.managerPw = pw;
+  saveMaster();
+  _deptPanel = null;
+  switchTab('departments');
+}
+
+function clearManagerPw(id) {
+  const dept = getDept(id);
+  if (!dept) return;
+  dept.managerPw = '';
+  saveMaster();
+  _deptPanel = null;
+  switchTab('departments');
 }
 
 function addDepartment() {
-  const name = document.getElementById('new-dept-name').value.trim();
-  const color = document.getElementById('new-dept-color').value;
-  const pw = (document.getElementById('new-dept-pw').value || '').trim();
+  const name       = document.getElementById('new-dept-name').value.trim();
+  const color      = document.getElementById('new-dept-color').value;
+  const pw         = (document.getElementById('new-dept-pw').value || '').trim();
+  const mgrName    = (document.getElementById('new-dept-mgr-name').value || '').trim();
+  const mgrEmail   = (document.getElementById('new-dept-mgr-email').value || '').trim();
   if (!name) { document.getElementById('new-dept-name').focus(); return; }
   const id = name.toLowerCase().replace(/[^a-z0-9]/g,'_').replace(/_+/g,'_');
-  if (MASTER.departments.find(d=>d.id===id)) { alert('A department with that name already exists.'); return; }
-  MASTER.departments.push({ id, name, color, managerPw: pw });
+  if (MASTER.departments.find(d=>d.id===id)) {
+    document.getElementById('new-dept-name').style.borderColor='var(--red)';
+    document.getElementById('new-dept-name').value='';
+    document.getElementById('new-dept-name').placeholder='That name already exists';
+    return;
+  }
+  MASTER.departments.push({ id, name, color, managerPw:pw, managerName:mgrName, managerEmail:mgrEmail });
   saveMaster();
   renderDeptTabs();
   switchTab('departments');
 }
 
-function promptEditDept(id) {
-  const dept = getDept(id);
-  if (!dept) return;
-  const name = prompt('Department name:', dept.name);
-  if (!name || !name.trim()) return;
-  const color = prompt('Colour (hex, e.g. #2563EB):', dept.color);
-  dept.name = name.trim();
-  if (color && /^#[0-9a-fA-F]{3,6}$/.test(color.trim())) dept.color = color.trim();
-  saveMaster();
-  renderDeptTabs();
-  switchTab('departments');
-}
-
-function promptSetManagerPw(id) {
-  const dept = getDept(id);
-  if (!dept) return;
-  const pw = prompt(`Set manager password for ${dept.name}:\n(Leave blank to clear)`, '');
-  if (pw === null) return; // cancelled
-  dept.managerPw = pw.trim();
-  saveMaster();
-  switchTab('departments');
-}
-
-function confirmDeleteDept(id) {
-  const dept = getDept(id);
-  if (!dept) return;
-  if (!confirm(`Delete department "${dept.name}"?\n\nThis will permanently remove all game data for this department.`)) return;
+function doDeleteDept(id) {
   localStorage.removeItem(`kpi_hm_dept_${id}`);
   MASTER.departments = MASTER.departments.filter(d=>d.id!==id);
   saveMaster();
+  _deptPanel = null;
   if (currentDeptId === id) {
     currentDeptId = MASTER.departments[0].id;
     loadG(currentDeptId);
     renderDeptTabs();
     render();
   }
+  // Refresh admin dept select if present
+  const sel = document.getElementById('admin-dept-select');
+  if (sel) { sel.innerHTML=''; MASTER.departments.forEach(d=>{ const o=document.createElement('option');o.value=d.id;o.textContent=d.name;if(d.id===currentDeptId)o.selected=true;sel.appendChild(o); }); }
   switchTab('departments');
 }
 
