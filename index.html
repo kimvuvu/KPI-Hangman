@@ -332,12 +332,12 @@ header{background:var(--navy);height:60px;display:flex;align-items:center;justif
 <div class="modal-backdrop" id="puzzle-modal">
   <div class="modal">
     <h2>⚙️ New Puzzle Phrase</h2>
-    <p class="modal-sub">Enter the secret phrase players will try to guess. KPI tasks rotate automatically each weekday — no setup needed.</p>
+    <p class="modal-sub">Enter the secret phrase players will try to guess. A new puzzle starts when the previous one is won, or whenever you manually set one here.</p>
     <div class="form-field">
       <label>Secret Phrase <span style="font-weight:400;text-transform:none">(letters &amp; spaces only)</span></label>
       <input type="text" id="admin-phrase" placeholder="e.g. You get what you repeat" autocomplete="off"/>
     </div>
-    <div class="warning-box">⚠️ Clicking <strong>Start New Puzzle</strong> clears all guesses and reveals from the current board. The daily KPI task will keep rotating automatically.</div>
+    <div class="warning-box">⚠️ Clicking <strong>Start New Puzzle</strong> clears all guesses and player progress from the current board.</div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closePuzzleModal()">Cancel</button>
       <button class="btn btn-primary" onclick="startNewPuzzle()">Start New Puzzle</button>
@@ -415,7 +415,7 @@ header{background:var(--navy);height:60px;display:flex;align-items:center;justif
         </div>
         <div class="rules-item">
           <span class="rules-item-icon">🔄</span>
-          <span>Puzzles rotate automatically on a bi-monthly schedule. New puzzle, new chance to win!</span>
+          <span>Once a puzzle is won, the admin will set a new phrase. New puzzle, new chance to win!</span>
         </div>
       </div>
 
@@ -570,24 +570,10 @@ function init() {
   });
   document.getElementById('phrase-input').addEventListener('keydown', e=>{ if(e.key==='Enter') submitPhraseGuess(); });
   document.getElementById('admin-password-input').addEventListener('keydown', e=>{ if(e.key==='Enter') handleAdminLogin(); });
-  checkDailyKPIRotation();
   if (!G.phrase || G.status==='SETUP') openPuzzleModal();
   else render();
 }
 
-/* ══════════════════════════════════════════
-   DAILY KPI ROTATION
-══════════════════════════════════════════ */
-function checkDailyKPIRotation() {
-  const today = new Date(); const dow = today.getDay(); const todayStr = today.toDateString();
-  if (dow<1||dow>5) return;
-  if (G.kpiDate===todayStr) return;
-  const pool = getActiveTasks().filter(t=>t!==G.kpiTask);
-  if (!pool.length) return;
-  G.kpiTask = pool[Math.floor(Math.random()*pool.length)];
-  G.kpiDate = todayStr;
-  save();
-}
 
 /* ══════════════════════════════════════════
    RENDER
@@ -792,7 +778,6 @@ function startNewPuzzle() {
   if(G.phrase){history.push({phrase:G.phrase,startDate:G.kpiDate,endDate:todayStr(),winner:G.winner||null,totalGuesses:(G.guesses||[]).length,won:G.status==='WON'});}
   G={phrase,kpiTask:G.kpiTask,kpiDate:G.kpiDate,guessedLetters:[],playerData:{},guesses:[],status:'PLAYING',winner:'',
      auditLog:G.auditLog||[],customKPIs:G.customKPIs||[],disabledKPIs:G.disabledKPIs||[],puzzleHistory:history};
-  checkDailyKPIRotation();
   S={name:'',unlocked:false,guessed:false,eliminated:false,wrongCount:0,wrongLetters:[]};
   ['player-name','kpi-response'].forEach(id=>{const el=document.getElementById(id);el.value='';el.disabled=false;});
   const btn=document.getElementById('submit-kpi-btn');btn.textContent='Submit & Unlock';btn.disabled=false;
