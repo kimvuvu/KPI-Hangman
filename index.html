@@ -562,10 +562,9 @@ header{background:var(--navy);height:44px;display:flex;align-items:center;justif
 </div>
 
 <script>
-/* ══════════════════════════════════════════
-   BUILT-IN KPI TASKS
-══════════════════════════════════════════ */
-const BUILTIN_KPI_TASKS = [
+
+// Accounting's default KPI task list — seeded once on first load, then managed by the manager
+const ACCOUNTING_DEFAULT_KPIS = [
   "Month End task closed ahead of schedule","Collected on an invoice quicker than the prior month",
   "Hold a Huddle","Share a Meme","Learn a New Formula","Use of AI","Automate a Process",
   "Post a Photo","Document SOP","Share a time saving tip","Give a shout out","Improve a workflow",
@@ -580,6 +579,7 @@ const BUILTIN_KPI_TASKS = [
   "Start a meeting with gratitude or good news","Celebrate a teammate's birthday or work anniversary",
   "Share an accounting trick or shortcut",
 ];
+
 const HANGMAN_PARTS = ['hm-head','hm-body','hm-larm','hm-rarm','hm-lleg','hm-rleg'];
 const MAX_WRONG = 6;
 const KEY_ROWS = [['Q','W','E','R','T','Y','U','I','O','P'],['A','S','D','F','G','H','J','K','L'],['Z','X','C','V','B','N','M']];
@@ -706,10 +706,10 @@ function init() {
   currentDeptId = MASTER.departments[0].id;
   loadG(currentDeptId);
 
-  // ── Migration: seed Accounting with built-in KPI tasks if not already done ──
+  // ── One-time seed: populate Accounting with its default KPI tasks if the list is still empty ──
+  // New departments added later are intentionally left blank for their managers to fill in.
   if (currentDeptId === 'accounting' && !(G.customKPIs||[]).length) {
-    G.customKPIs = [...BUILTIN_KPI_TASKS];
-    // Respect any previously-disabled built-ins (keep disabledKPIs list intact)
+    G.customKPIs = [...ACCOUNTING_DEFAULT_KPIS];
     saveG();
   }
 
