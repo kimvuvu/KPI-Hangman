@@ -204,10 +204,10 @@ header{background:var(--navy);height:44px;display:flex;align-items:center;justif
 .tag-red{background:var(--red-light);color:var(--red);}
 
 /* KPI Manager list */
-.kpi-list{display:flex;flex-direction:column;gap:6px;margin-bottom:20px;max-height:380px;overflow-y:auto;}
-.kpi-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;border:1px solid var(--gray-200);background:var(--gray-50);}
-.kpi-item.is-custom{border-color:#BFDBFE;background:var(--blue-light);}
-.kpi-item.is-disabled{opacity:.45;}
+.kpi-list{display:flex;flex-direction:column;gap:6px;margin-bottom:20px;max-height:520px;overflow-y:auto;}
+.kpi-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;border:1px solid var(--gray-200);background:var(--gray-50);transition:border-color .15s;}
+.kpi-item.is-active-task{border-color:var(--green);background:var(--green-light);}
+.kpi-item.is-disabled{opacity:.6;}
 .kpi-item-text{flex:1;font-size:13px;color:var(--gray-800);}
 .kpi-item-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;}
 
@@ -600,8 +600,8 @@ let G = {
   guessedLetters:[], playerData:{}, guesses:[],
   status:'SETUP', winner:'',
   auditLog:[],        // { player, kpiTask, response, dateStr, ts }
-  customKPIs:[],      // user-added KPI task strings
-  disabledKPIs:[],    // built-in tasks to exclude from rotation
+  customKPIs:[],      // dept KPI task strings (set by manager)
+  disabledKPIs:[],    // tasks disabled by manager (hidden from game)
   puzzleHistory:[],   // { phrase, startDate, endDate, winner, totalGuesses, won }
 };
 let S = { name:'', unlocked:false, guessed:false, eliminated:false, wrongCount:0, wrongLetters:[] };
@@ -639,8 +639,8 @@ function loadMaster() {
    ACTIVE KPI TASK LIST
 ══════════════════════════════════════════ */
 function getActiveTasks() {
-  const enabled = BUILTIN_KPI_TASKS.filter(t => !(G.disabledKPIs||[]).includes(t));
-  return [...enabled, ...(G.customKPIs||[])];
+  // Each department manages its own KPI list — no shared built-ins
+  return (G.customKPIs||[]).filter(t => !(G.disabledKPIs||[]).includes(t));
 }
 
 /* ══════════════════════════════════════════
@@ -706,6 +706,13 @@ function init() {
   currentDeptId = MASTER.departments[0].id;
   loadG(currentDeptId);
 
+  // ── Migration: seed Accounting with built-in KPI tasks if not already done ──
+  if (currentDeptId === 'accounting' && !(G.customKPIs||[]).length) {
+    G.customKPIs = [...BUILTIN_KPI_TASKS];
+    // Respect any previously-disabled built-ins (keep disabledKPIs list intact)
+    saveG();
+  }
+
   document.getElementById('date-display').textContent =
     new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
   const dept = getDept(currentDeptId);
@@ -721,22 +728,31 @@ function init() {
     }); kb.appendChild(rowEl);
   });
   document.getElementById('phrase-input').addEventListener('keydown', e=>{ if(e.key==='Enter') submitPhraseGuess(); });
+  // KPI input Enter key (delegated — element is dynamically rendered)
+  document.getElementById('admin-content').addEventListener('keydown', e=>{
+    if (e.key==='Enter' && e.target.id==='new-kpi-input') addCustomKPI();
+  });
   document.getElementById('admin-password-input').addEventListener('keydown', e=>{ if(e.key==='Enter') handleAdminLogin(); });
   document.getElementById('dm-name').addEventListener('keydown', e=>{ if(e.key==='Enter') saveDeptEdit(); });
   document.getElementById('dm-pw').addEventListener('keydown', e=>{ if(e.key==='Enter') saveDeptPw(false); });
-  // Event delegation for dept tab buttons (avoids dynamic onclick issues in iframes)
+  // Event delegation for all admin tab buttons (avoids dynamic onclick issues in iframes)
   document.getElementById('admin-content').addEventListener('click', e=>{
     const btn = e.target.closest('[data-action]');
     if (!btn) {
-      // Also handle add-dept button
       if (e.target.id === 'add-dept-btn') addDepartment();
+      if (e.target.id === 'add-kpi-btn')  addCustomKPI();
       return;
     }
     const action = btn.dataset.action;
     const idx    = parseInt(btn.dataset.idx, 10);
-    if (action==='edit')   openDeptModal('edit',   idx);
-    if (action==='pw')     openDeptModal('pw',     idx);
-    if (action==='delete') openDeptModal('delete', idx);
+    // Dept management
+    if (action==='edit')       openDeptModal('edit',   idx);
+    if (action==='pw')         openDeptModal('pw',     idx);
+    if (action==='delete')     openDeptModal('delete', idx);
+    // KPI management
+    if (action==='kpi-active') kpiSetActive(idx);
+    if (action==='kpi-toggle') kpiToggleDisable(idx);
+    if (action==='kpi-delete') kpiDelete(idx);
   });
 
   renderDeptTabs();
@@ -1183,52 +1199,99 @@ function renderPuzzleTab() {
 
 /* ── KPI MANAGER TAB ── */
 function renderKPIsTab() {
-  const custom = G.customKPIs||[];
-  const disabled = G.disabledKPIs||[];
-  const allBuiltin = BUILTIN_KPI_TASKS;
+  const tasks    = G.customKPIs  || [];
+  const disabled = G.disabledKPIs || [];
+  const active   = G.kpiTask || '';
+  const deptName = (getDept(currentDeptId)||{}).name || 'This Department';
+  const enabledCount = tasks.filter(t=>!disabled.includes(t)).length;
+
   return `
-    <div class="section-header">Add Custom KPI Task</div>
-    <div style="display:flex;gap:10px;margin-bottom:24px">
-      <input type="text" id="new-kpi-input" placeholder="Enter a new KPI task…" style="flex:1;padding:9px 13px;border:1px solid var(--gray-200);border-radius:8px;font-size:14px;outline:none"/>
-      <button class="btn btn-primary" onclick="addCustomKPI()">+ Add Task</button>
+    <!-- Current Active Task banner -->
+    <div style="background:var(--blue-light);border:1px solid #BFDBFE;border-radius:10px;padding:12px 16px;margin-bottom:20px;display:flex;align-items:center;gap:12px;">
+      <div style="font-size:20px">🎯</div>
+      <div style="flex:1">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--blue);margin-bottom:2px;">Active KPI Task</div>
+        <div style="font-size:13px;font-weight:600;color:var(--navy)">${active ? escHtml(active) : '<span style="color:var(--gray-400);font-style:italic">No task set — click "Set Active" on any task below</span>'}</div>
+      </div>
+      <div style="font-size:11px;color:var(--gray-500);white-space:nowrap">${enabledCount} enabled · ${tasks.length} total</div>
     </div>
-    ${custom.length ? `
-      <div class="section-header">Custom Tasks (${custom.length})</div>
-      <div class="kpi-list" style="margin-bottom:24px">
-        ${custom.map((t,i)=>`
-          <div class="kpi-item is-custom">
-            <span class="kpi-item-badge tag tag-blue">Custom</span>
-            <span class="kpi-item-text">${escHtml(t)}</span>
-            <button class="btn btn-sm btn-red" onclick="removeCustomKPI(${i})">Remove</button>
-          </div>`).join('')}
-      </div>` : ''}
-    <div class="section-header">Built-in Tasks (${allBuiltin.length - disabled.length} active)</div>
-    <div class="kpi-list">
-      ${allBuiltin.map(t=>{
-        const isDisabled=disabled.includes(t);
-        const isCurrent=t===G.kpiTask;
-        return `<div class="kpi-item ${isDisabled?'is-disabled':''}">
-          ${isCurrent?'<span class="kpi-item-badge tag tag-green">Today</span>':''}
-          <span class="kpi-item-text">${escHtml(t)}</span>
-          <button class="btn btn-sm ${isDisabled?'btn-green':'btn-ghost'}" onclick="toggleBuiltinKPI('${escHtml(t).replace(/'/g,"\\'")}')">
-            ${isDisabled?'Enable':'Disable'}
-          </button>
-        </div>`;
-      }).join('')}
-    </div>`;
+
+    <!-- Add new KPI -->
+    <div class="section-header">Add KPI Task for ${escHtml(deptName)}</div>
+    <div style="display:flex;gap:10px;margin-bottom:24px">
+      <input type="text" id="new-kpi-input" placeholder="Enter a KPI task…" style="flex:1;padding:9px 13px;border:1px solid var(--gray-200);border-radius:8px;font-size:14px;outline:none"/>
+      <button class="btn btn-primary" id="add-kpi-btn">+ Add Task</button>
+    </div>
+
+    <!-- Task list -->
+    <div class="section-header">${deptName} KPI Tasks (${tasks.length})</div>
+    ${!tasks.length
+      ? `<div style="padding:20px;text-align:center;color:var(--gray-400);font-size:13px;background:var(--gray-50);border-radius:10px;border:1px dashed var(--gray-200)">
+           No KPI tasks yet. Add your first task above.
+         </div>`
+      : `<div class="kpi-list">
+          ${tasks.map((t,i)=>{
+            const isDisabled = disabled.includes(t);
+            const isCurrent  = t === active;
+            return `<div class="kpi-item${isDisabled?' is-disabled':''}${isCurrent?' is-active-task':''}">
+              <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+                ${isCurrent  ? '<span class="kpi-item-badge tag tag-green">✓ Active</span>' : ''}
+                ${isDisabled ? '<span class="kpi-item-badge tag tag-red" style="background:#FEE2E2;color:#DC2626;border:1px solid #FECACA">Disabled</span>' : ''}
+                <span class="kpi-item-text" style="${isDisabled?'opacity:.45;text-decoration:line-through;':''}">${escHtml(t)}</span>
+              </div>
+              <div style="display:flex;gap:6px;flex-shrink:0">
+                ${!isCurrent && !isDisabled ? `<button class="btn btn-sm btn-primary" data-action="kpi-active" data-idx="${i}">Set Active</button>` : ''}
+                <button class="btn btn-sm ${isDisabled?'btn-green':'btn-ghost'}" data-action="kpi-toggle" data-idx="${i}">${isDisabled?'Enable':'Disable'}</button>
+                <button class="btn btn-sm btn-red" data-action="kpi-delete" data-idx="${i}">Delete</button>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>`
+    }`;
 }
 function addCustomKPI() {
-  const input=document.getElementById('new-kpi-input');
-  const val=input.value.trim();if(!val)return;
-  if(!G.customKPIs) G.customKPIs=[];
-  G.customKPIs.push(val);input.value='';saveG();switchTab('kpis');
+  const input = document.getElementById('new-kpi-input');
+  const val   = input.value.trim();
+  if (!val) return;
+  if (!G.customKPIs) G.customKPIs = [];
+  G.customKPIs.push(val);
+  input.value = '';
+  saveG();
+  switchTab('kpis');
 }
-function removeCustomKPI(i){if(!G.customKPIs)return;G.customKPIs.splice(i,1);saveG();switchTab('kpis');}
-function toggleBuiltinKPI(task){
-  if(!G.disabledKPIs)G.disabledKPIs=[];
-  const idx=G.disabledKPIs.indexOf(task);
-  if(idx>=0)G.disabledKPIs.splice(idx,1);else G.disabledKPIs.push(task);
-  saveG();switchTab('kpis');
+function kpiSetActive(idx) {
+  const tasks = G.customKPIs || [];
+  if (idx < 0 || idx >= tasks.length) return;
+  G.kpiTask  = tasks[idx];
+  G.kpiDate  = todayStr();
+  saveG();
+  renderTask();
+  switchTab('kpis');
+}
+function kpiToggleDisable(idx) {
+  const tasks = G.customKPIs || [];
+  if (idx < 0 || idx >= tasks.length) return;
+  if (!G.disabledKPIs) G.disabledKPIs = [];
+  const task   = tasks[idx];
+  const pos    = G.disabledKPIs.indexOf(task);
+  if (pos >= 0) G.disabledKPIs.splice(pos, 1);
+  else          G.disabledKPIs.push(task);
+  // If the currently active task gets disabled, clear it
+  if (G.kpiTask === task && pos < 0) { G.kpiTask = ''; G.kpiDate = ''; renderTask(); }
+  saveG();
+  switchTab('kpis');
+}
+function kpiDelete(idx) {
+  const tasks = G.customKPIs || [];
+  if (idx < 0 || idx >= tasks.length) return;
+  const task = tasks[idx];
+  // Clear active task if it's the one being deleted
+  if (G.kpiTask === task) { G.kpiTask = ''; G.kpiDate = ''; renderTask(); }
+  // Remove from disabled list too
+  if (G.disabledKPIs) { const p=G.disabledKPIs.indexOf(task); if(p>=0) G.disabledKPIs.splice(p,1); }
+  G.customKPIs.splice(idx, 1);
+  saveG();
+  switchTab('kpis');
 }
 
 /* ── AUDIT LOG TAB ── */
