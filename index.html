@@ -438,6 +438,63 @@ header{background:var(--navy);height:60px;display:flex;align-items:center;justif
   </div>
 </div>
 
+<!-- ══ DEPARTMENT MANAGEMENT MODAL ══ -->
+<div class="modal-backdrop" id="dept-modal">
+  <div class="modal" style="max-width:520px">
+    <h2 id="dept-modal-title">Edit Department</h2>
+    <p class="modal-sub" id="dept-modal-sub"></p>
+
+    <!-- EDIT PANEL -->
+    <div id="dept-panel-edit">
+      <div class="form-field">
+        <label>Department Name</label>
+        <input type="text" id="dm-name" placeholder="e.g. Sales" autocomplete="off"/>
+      </div>
+      <div style="display:flex;gap:12px">
+        <div class="form-field" style="flex:1">
+          <label>Manager Name</label>
+          <input type="text" id="dm-mgr-name" placeholder="e.g. Jane Smith" autocomplete="off"/>
+        </div>
+        <div class="form-field" style="flex:1">
+          <label>Manager Email</label>
+          <input type="email" id="dm-mgr-email" placeholder="jane@katalys.com" autocomplete="off"/>
+        </div>
+      </div>
+      <div class="form-field">
+        <label>Colour</label>
+        <input type="color" id="dm-color" style="width:56px;height:38px;border-radius:8px;border:1px solid var(--gray-200);cursor:pointer;padding:2px"/>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeDeptModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveDeptEdit()">Save Changes</button>
+      </div>
+    </div>
+
+    <!-- SET PASSWORD PANEL -->
+    <div id="dept-panel-pw" style="display:none">
+      <div class="form-field">
+        <label>New Manager Password</label>
+        <input type="password" id="dm-pw" placeholder="Enter new password (blank to remove access)" autocomplete="new-password"/>
+      </div>
+      <div id="dm-pw-current" style="font-size:12px;margin-bottom:14px"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeDeptModal()">Cancel</button>
+        <button class="btn btn-red btn-sm" id="dm-clear-pw-btn" onclick="saveDeptPw(true)" style="margin-right:auto">Remove Access</button>
+        <button class="btn btn-primary" onclick="saveDeptPw(false)">Save Password</button>
+      </div>
+    </div>
+
+    <!-- DELETE PANEL -->
+    <div id="dept-panel-delete" style="display:none">
+      <div class="warning-box" id="dm-delete-warning"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeDeptModal()">Cancel</button>
+        <button class="btn btn-red" onclick="saveDeptDelete()">Yes, Delete Permanently</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="admin-login-modal">
   <div class="modal" style="max-width:420px">
     <h2 id="login-title">🔐 Admin Login</h2>
@@ -665,6 +722,22 @@ function init() {
   });
   document.getElementById('phrase-input').addEventListener('keydown', e=>{ if(e.key==='Enter') submitPhraseGuess(); });
   document.getElementById('admin-password-input').addEventListener('keydown', e=>{ if(e.key==='Enter') handleAdminLogin(); });
+  document.getElementById('dm-name').addEventListener('keydown', e=>{ if(e.key==='Enter') saveDeptEdit(); });
+  document.getElementById('dm-pw').addEventListener('keydown', e=>{ if(e.key==='Enter') saveDeptPw(false); });
+  // Event delegation for dept tab buttons (avoids dynamic onclick issues in iframes)
+  document.getElementById('admin-content').addEventListener('click', e=>{
+    const btn = e.target.closest('[data-action]');
+    if (!btn) {
+      // Also handle add-dept button
+      if (e.target.id === 'add-dept-btn') addDepartment();
+      return;
+    }
+    const action = btn.dataset.action;
+    const idx    = parseInt(btn.dataset.idx, 10);
+    if (action==='edit')   openDeptModal('edit',   idx);
+    if (action==='pw')     openDeptModal('pw',     idx);
+    if (action==='delete') openDeptModal('delete', idx);
+  });
 
   renderDeptTabs();
   if (!G.phrase || G.status==='SETUP') render();
@@ -1252,109 +1325,43 @@ function renderMetricsTab() {
 }
 
 /* ── DEPARTMENTS TAB (super admin only) ── */
-let _deptPanel = null; // { type:'edit'|'pw'|'delete', id:string }
+let _deptModalId = null;
 
 function renderDepartmentsTab() {
   const depts = MASTER.departments;
-
-  // ── Inline panel renderer ──
-  let panelHtml = '';
-  if (_deptPanel) {
-    const d = getDept(_deptPanel.id);
-    if (d) {
-      if (_deptPanel.type === 'edit') {
-        panelHtml = `
-          <div style="background:#FFFBEB;border:2px solid var(--gold);border-radius:12px;padding:20px;margin-bottom:20px">
-            <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:14px">✏️ Edit Department — ${escHtml(d.name)}</div>
-            <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
-              <div class="portal-field" style="flex:1;min-width:160px">
-                <div class="portal-field-label">Department Name</div>
-                <input type="text" id="edit-dept-name" class="portal-input" value="${escHtml(d.name)}" style="width:100%"/>
-              </div>
-              <div class="portal-field">
-                <div class="portal-field-label">Colour</div>
-                <input type="color" id="edit-dept-color" value="${d.color}" style="width:48px;height:38px;border-radius:8px;border:1px solid var(--gray-200);cursor:pointer;padding:2px"/>
-              </div>
-            </div>
-            <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
-              <div class="portal-field" style="flex:1;min-width:180px">
-                <div class="portal-field-label">Manager Name</div>
-                <input type="text" id="edit-mgr-name" class="portal-input" value="${escHtml(d.managerName||'')}" placeholder="e.g. Jane Smith" style="width:100%"/>
-              </div>
-              <div class="portal-field" style="flex:1;min-width:200px">
-                <div class="portal-field-label">Manager Email</div>
-                <input type="email" id="edit-mgr-email" class="portal-input" value="${escHtml(d.managerEmail||'')}" placeholder="e.g. jane@katalys.com" style="width:100%"/>
-              </div>
-            </div>
-            <div style="display:flex;gap:8px">
-              <button class="btn btn-primary" onclick="saveEditDept('${d.id}')">Save Changes</button>
-              <button class="btn btn-ghost" onclick="cancelDeptPanel()">Cancel</button>
-            </div>
-          </div>`;
-      } else if (_deptPanel.type === 'pw') {
-        panelHtml = `
-          <div style="background:#FFFBEB;border:2px solid var(--gold);border-radius:12px;padding:20px;margin-bottom:20px">
-            <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:6px">🔑 Set Manager Password — ${escHtml(d.name)}</div>
-            <div style="font-size:12px;color:var(--gray-500);margin-bottom:14px">The manager uses this password to log into their department dashboard. Leave blank to remove access.</div>
-            <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
-              <div class="portal-field" style="flex:1;min-width:220px">
-                <div class="portal-field-label">New Password</div>
-                <input type="password" id="edit-dept-pw" class="portal-input" placeholder="Enter new manager password" style="width:100%"/>
-              </div>
-              <button class="btn btn-primary" onclick="saveManagerPw('${d.id}')">Save Password</button>
-              <button class="btn btn-ghost" onclick="cancelDeptPanel()">Cancel</button>
-            </div>
-            ${d.managerPw ? `<div style="margin-top:10px"><button class="btn btn-sm btn-red" onclick="clearManagerPw('${d.id}')">🗑 Remove Password (revoke manager access)</button></div>` : ''}
-          </div>`;
-      } else if (_deptPanel.type === 'delete') {
-        panelHtml = `
-          <div style="background:#FEF2F2;border:2px solid var(--red);border-radius:12px;padding:20px;margin-bottom:20px">
-            <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:6px">🗑 Delete Department — ${escHtml(d.name)}</div>
-            <div style="font-size:13px;color:var(--gray-700);margin-bottom:16px">This will <strong>permanently delete</strong> all game data, KPIs, audit logs, and player history for <strong>${escHtml(d.name)}</strong>. This cannot be undone.</div>
-            <div style="display:flex;gap:10px">
-              <button class="btn btn-red" onclick="doDeleteDept('${d.id}')">Yes, Delete ${escHtml(d.name)}</button>
-              <button class="btn btn-ghost" onclick="cancelDeptPanel()">Cancel</button>
-            </div>
-          </div>`;
-      }
-    }
-  }
-
   return `
-    ${panelHtml}
     <div class="section-header">Departments (${depts.length})</div>
     <div style="background:var(--blue-light);border:1px solid #BFDBFE;border-radius:10px;padding:12px 16px;font-size:12px;color:#1e40af;margin-bottom:16px">
-      💡 Each department has its own game, KPI list, and reporting. Managers log in with their department password and only see their own data.
+      💡 Each department has its own game, KPI list, and reporting. Managers log in with their department password and can only see their own data.
     </div>
     <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:28px">
-      ${depts.map(d=>`
+      ${depts.map((d,i)=>`
         <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <div style="width:16px;height:16px;border-radius:50%;background:${d.color};flex-shrink:0"></div>
           <div style="flex:1;min-width:140px">
             <div style="font-size:14px;font-weight:700;color:var(--navy)">${escHtml(d.name)}</div>
             <div style="font-size:11px;color:var(--gray-600);margin-top:3px">
-              ${d.managerName ? `👤 ${escHtml(d.managerName)}` : '<span style="color:var(--gray-400)">No manager name set</span>'}
-              ${d.managerEmail ? ` · <a href="mailto:${escHtml(d.managerEmail)}" style="color:var(--blue)">${escHtml(d.managerEmail)}</a>` : ''}
+              ${d.managerName ? `👤 ${escHtml(d.managerName)}` : '<span style="color:var(--gray-400)">No manager assigned</span>'}
+              ${d.managerEmail ? ` · ${escHtml(d.managerEmail)}` : ''}
             </div>
             <div style="font-size:11px;margin-top:2px">
               Password: ${d.managerPw
-                ? `<span style="color:var(--green);font-weight:600">✓ Set</span>`
-                : `<span style="color:var(--red);font-weight:600">⚠ Not set — manager cannot log in</span>`}
+                ? '<span style="color:var(--green);font-weight:600">✓ Set</span>'
+                : '<span style="color:var(--red);font-weight:600">⚠ Not set</span>'}
             </div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-sm btn-ghost" onclick="openDeptPanel('edit','${d.id}')">✏️ Edit</button>
-            <button class="btn btn-sm btn-ghost" onclick="openDeptPanel('pw','${d.id}')">${d.managerPw ? '🔑 Reset PW' : '🔑 Set PW'}</button>
-            ${depts.length > 1 ? `<button class="btn btn-sm btn-red" onclick="openDeptPanel('delete','${d.id}')">🗑 Delete</button>` : ''}
+            <button class="btn btn-sm btn-ghost" data-action="edit" data-idx="${i}">✏️ Edit</button>
+            <button class="btn btn-sm btn-ghost" data-action="pw" data-idx="${i}">${d.managerPw?'🔑 Reset PW':'🔑 Set PW'}</button>
+            ${depts.length>1?`<button class="btn btn-sm btn-red" data-action="delete" data-idx="${i}">🗑 Delete</button>`:''}
           </div>
         </div>`).join('')}
     </div>
-
     <div class="section-header">Add New Department</div>
     <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:12px;padding:18px 20px">
-      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
-        <div class="portal-field" style="flex:1;min-width:160px">
-          <div class="portal-field-label">Department Name</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <div class="portal-field" style="flex:1;min-width:150px">
+          <div class="portal-field-label">Name</div>
           <input type="text" id="new-dept-name" class="portal-input" placeholder="e.g. Sales" style="width:100%"/>
         </div>
         <div class="portal-field">
@@ -1362,113 +1369,119 @@ function renderDepartmentsTab() {
           <input type="color" id="new-dept-color" value="#2563EB" style="width:48px;height:38px;border-radius:8px;border:1px solid var(--gray-200);cursor:pointer;padding:2px"/>
         </div>
       </div>
-      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
-        <div class="portal-field" style="flex:1;min-width:180px">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <div class="portal-field" style="flex:1;min-width:160px">
           <div class="portal-field-label">Manager Name <span style="color:var(--gray-400);font-weight:400;text-transform:none">(optional)</span></div>
           <input type="text" id="new-dept-mgr-name" class="portal-input" placeholder="e.g. Jane Smith" style="width:100%"/>
         </div>
-        <div class="portal-field" style="flex:1;min-width:200px">
+        <div class="portal-field" style="flex:1;min-width:180px">
           <div class="portal-field-label">Manager Email <span style="color:var(--gray-400);font-weight:400;text-transform:none">(optional)</span></div>
-          <input type="email" id="new-dept-mgr-email" class="portal-input" placeholder="e.g. jane@katalys.com" style="width:100%"/>
+          <input type="email" id="new-dept-mgr-email" class="portal-input" placeholder="jane@katalys.com" style="width:100%"/>
         </div>
       </div>
-      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
-        <div class="portal-field" style="flex:1;min-width:220px">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <div class="portal-field" style="flex:1;min-width:200px">
           <div class="portal-field-label">Manager Password <span style="color:var(--gray-400);font-weight:400;text-transform:none">(can set later)</span></div>
           <input type="password" id="new-dept-pw" class="portal-input" placeholder="Password for the manager" style="width:100%"/>
         </div>
-        <button class="btn btn-primary" onclick="addDepartment()" style="white-space:nowrap">+ Add Department</button>
+        <button class="btn btn-primary" id="add-dept-btn" style="white-space:nowrap">+ Add Department</button>
       </div>
     </div>
-
     <div class="section-header" style="margin-top:28px">Admin Login History</div>
-    ${!(MASTER.loginLog||[]).length ? '<div style="font-size:13px;color:var(--gray-400)">No logins recorded yet.</div>' : `
-    <table class="admin-table">
-      <thead><tr><th>Date</th><th>Name</th><th>Role</th><th>Department</th></tr></thead>
-      <tbody>
-        ${[...(MASTER.loginLog||[])].reverse().slice(0,50).map(l=>`<tr>
-          <td style="white-space:nowrap;color:var(--gray-500)">${l.dateStr} <span style="font-size:10px;color:var(--gray-400)">${new Date(l.ts).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</span></td>
-          <td><strong>${escHtml(l.name)}</strong></td>
-          <td>${l.role==='super' ? '<span style="color:var(--gold);font-weight:700">⭐ Super Admin</span>' : '<span style="color:var(--blue);font-weight:600">🔐 Manager</span>'}</td>
-          <td>${escHtml(l.deptName||l.deptId)}</td>
-        </tr>`).join('')}
-      </tbody>
+    ${!(MASTER.loginLog||[]).length ? '<div style="font-size:13px;color:var(--gray-400)">No logins recorded yet.</div>' :
+    `<table class="admin-table">
+      <thead><tr><th>Date &amp; Time</th><th>Name</th><th>Role</th><th>Department</th></tr></thead>
+      <tbody>${[...(MASTER.loginLog||[])].reverse().slice(0,50).map(l=>`<tr>
+        <td style="white-space:nowrap;color:var(--gray-500)">${l.dateStr} ${new Date(l.ts).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</td>
+        <td><strong>${escHtml(l.name)}</strong></td>
+        <td>${l.role==='super'?'<span style="color:var(--gold);font-weight:700">⭐ Super Admin</span>':'<span style="color:var(--blue);font-weight:600">🔐 Manager</span>'}</td>
+        <td>${escHtml(l.deptName||l.deptId)}</td>
+      </tr>`).join('')}</tbody>
     </table>`}`;
 }
 
-function openDeptPanel(type, id) { _deptPanel = { type, id }; switchTab('departments'); }
-function cancelDeptPanel() { _deptPanel = null; switchTab('departments'); }
-
-function saveEditDept(id) {
-  const dept = getDept(id);
-  if (!dept) return;
-  const name = document.getElementById('edit-dept-name').value.trim();
-  const color = document.getElementById('edit-dept-color').value;
-  if (!name) { document.getElementById('edit-dept-name').focus(); return; }
-  dept.name = name;
-  dept.color = color;
-  dept.managerName  = document.getElementById('edit-mgr-name').value.trim();
-  dept.managerEmail = document.getElementById('edit-mgr-email').value.trim();
-  saveMaster();
-  renderDeptTabs();
-  _deptPanel = null;
-  switchTab('departments');
+/* ── DEPARTMENT MODAL FUNCTIONS ── */
+function closeDeptModal() {
+  document.getElementById('dept-modal').classList.remove('open');
+  _deptModalId = null;
 }
 
-function saveManagerPw(id) {
-  const dept = getDept(id);
+function openDeptModal(type, idx) {
+  const dept = MASTER.departments[idx];
   if (!dept) return;
-  const pw = document.getElementById('edit-dept-pw').value.trim();
-  dept.managerPw = pw;
-  saveMaster();
-  _deptPanel = null;
-  switchTab('departments');
-}
-
-function clearManagerPw(id) {
-  const dept = getDept(id);
-  if (!dept) return;
-  dept.managerPw = '';
-  saveMaster();
-  _deptPanel = null;
-  switchTab('departments');
-}
-
-function addDepartment() {
-  const name       = document.getElementById('new-dept-name').value.trim();
-  const color      = document.getElementById('new-dept-color').value;
-  const pw         = (document.getElementById('new-dept-pw').value || '').trim();
-  const mgrName    = (document.getElementById('new-dept-mgr-name').value || '').trim();
-  const mgrEmail   = (document.getElementById('new-dept-mgr-email').value || '').trim();
-  if (!name) { document.getElementById('new-dept-name').focus(); return; }
-  const id = name.toLowerCase().replace(/[^a-z0-9]/g,'_').replace(/_+/g,'_');
-  if (MASTER.departments.find(d=>d.id===id)) {
-    document.getElementById('new-dept-name').style.borderColor='var(--red)';
-    document.getElementById('new-dept-name').value='';
-    document.getElementById('new-dept-name').placeholder='That name already exists';
-    return;
+  _deptModalId = dept.id;
+  // Hide all panels
+  ['edit','pw','delete'].forEach(p => document.getElementById('dept-panel-'+p).style.display='none');
+  const modal = document.getElementById('dept-modal');
+  if (type === 'edit') {
+    document.getElementById('dept-modal-title').textContent = '✏️ Edit Department';
+    document.getElementById('dept-modal-sub').textContent   = 'Update the department name, colour, and manager details.';
+    document.getElementById('dm-name').value      = dept.name;
+    document.getElementById('dm-color').value     = dept.color;
+    document.getElementById('dm-mgr-name').value  = dept.managerName  || '';
+    document.getElementById('dm-mgr-email').value = dept.managerEmail || '';
+    document.getElementById('dept-panel-edit').style.display = 'block';
+  } else if (type === 'pw') {
+    document.getElementById('dept-modal-title').textContent = '🔑 Set Manager Password';
+    document.getElementById('dept-modal-sub').textContent   = `Department: ${dept.name}`;
+    document.getElementById('dm-pw').value = '';
+    document.getElementById('dm-pw-current').textContent = dept.managerPw ? 'A password is currently set. Enter a new one to replace it.' : 'No password set yet.';
+    document.getElementById('dm-clear-pw-btn').style.display = dept.managerPw ? 'inline-flex' : 'none';
+    document.getElementById('dept-panel-pw').style.display = 'block';
+  } else if (type === 'delete') {
+    document.getElementById('dept-modal-title').textContent = '🗑 Delete Department';
+    document.getElementById('dept-modal-sub').textContent   = '';
+    document.getElementById('dm-delete-warning').innerHTML  = `You are about to permanently delete <strong>${escHtml(dept.name)}</strong>. All game data, KPIs, audit logs, and player history will be lost. This cannot be undone.`;
+    document.getElementById('dept-panel-delete').style.display = 'block';
   }
-  MASTER.departments.push({ id, name, color, managerPw:pw, managerName:mgrName, managerEmail:mgrEmail });
-  saveMaster();
-  renderDeptTabs();
-  switchTab('departments');
+  modal.classList.add('open');
 }
 
-function doDeleteDept(id) {
+function saveDeptEdit() {
+  const dept = getDept(_deptModalId); if (!dept) return;
+  const name = document.getElementById('dm-name').value.trim();
+  if (!name) { document.getElementById('dm-name').focus(); return; }
+  dept.name         = name;
+  dept.color        = document.getElementById('dm-color').value;
+  dept.managerName  = document.getElementById('dm-mgr-name').value.trim();
+  dept.managerEmail = document.getElementById('dm-mgr-email').value.trim();
+  saveMaster(); renderDeptTabs(); closeDeptModal(); switchTab('departments');
+}
+
+function saveDeptPw(clear) {
+  const dept = getDept(_deptModalId); if (!dept) return;
+  dept.managerPw = clear ? '' : document.getElementById('dm-pw').value.trim();
+  saveMaster(); closeDeptModal(); switchTab('departments');
+}
+
+function saveDeptDelete() {
+  const id = _deptModalId;
   localStorage.removeItem(`kpi_hm_dept_${id}`);
   MASTER.departments = MASTER.departments.filter(d=>d.id!==id);
   saveMaster();
-  _deptPanel = null;
   if (currentDeptId === id) {
     currentDeptId = MASTER.departments[0].id;
-    loadG(currentDeptId);
-    renderDeptTabs();
-    render();
+    loadG(currentDeptId); renderDeptTabs(); render();
   }
-  // Refresh admin dept select if present
   const sel = document.getElementById('admin-dept-select');
-  if (sel) { sel.innerHTML=''; MASTER.departments.forEach(d=>{ const o=document.createElement('option');o.value=d.id;o.textContent=d.name;if(d.id===currentDeptId)o.selected=true;sel.appendChild(o); }); }
-  switchTab('departments');
+  if (sel) { sel.innerHTML=''; MASTER.departments.forEach(d=>{const o=document.createElement('option');o.value=d.id;o.textContent=d.name;if(d.id===currentDeptId)o.selected=true;sel.appendChild(o);}); }
+  closeDeptModal(); switchTab('departments');
+}
+
+function addDepartment() {
+  const name     = document.getElementById('new-dept-name').value.trim();
+  const color    = document.getElementById('new-dept-color').value;
+  const pw       = (document.getElementById('new-dept-pw').value||'').trim();
+  const mgrName  = (document.getElementById('new-dept-mgr-name').value||'').trim();
+  const mgrEmail = (document.getElementById('new-dept-mgr-email').value||'').trim();
+  if (!name) { document.getElementById('new-dept-name').focus(); return; }
+  const id = name.toLowerCase().replace(/[^a-z0-9]/g,'_').replace(/_+/g,'_');
+  if (MASTER.departments.find(d=>d.id===id)) {
+    const el=document.getElementById('new-dept-name');
+    el.style.borderColor='var(--red)'; el.value=''; el.placeholder='That name already exists'; el.focus(); return;
+  }
+  MASTER.departments.push({id,name,color,managerPw:pw,managerName:mgrName,managerEmail:mgrEmail});
+  saveMaster(); renderDeptTabs(); switchTab('departments');
 }
 
 /* ── COMBINED REPORTING TAB (super admin only) ── */
