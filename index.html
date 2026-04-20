@@ -643,6 +643,21 @@ function getActiveTasks() {
   return (G.customKPIs||[]).filter(t => !(G.disabledKPIs||[]).includes(t));
 }
 
+// Called on page load and on dept switch.
+// If the stored kpiDate is not today, auto-pick a new random task from the enabled list.
+function checkDailyKPITask() {
+  if (G.kpiDate === todayStr()) return;   // already set for today — nothing to do
+  const available = getActiveTasks();
+  if (!available.length) return;          // no tasks configured yet — leave blank
+  // Pick a random task, avoiding repeating yesterday's task when possible
+  let choices = available.filter(t => t !== G.kpiTask);
+  if (!choices.length) choices = available; // only one task — reuse it
+  const pick = choices[Math.floor(Math.random() * choices.length)];
+  G.kpiTask = pick;
+  G.kpiDate = todayStr();
+  saveG();
+}
+
 /* ══════════════════════════════════════════
    DEPT HELPERS
 ══════════════════════════════════════════ */
@@ -666,6 +681,7 @@ function switchDept(deptId) {
   saveG();
   currentDeptId = deptId;
   loadG(deptId);
+  checkDailyKPITask(); // auto-rotate task if day has changed for this dept
   S = { name:'', unlocked:false, guessed:false, eliminated:false, wrongCount:0, wrongLetters:[] };
   resetPortal();
   renderDeptTabs();
@@ -712,6 +728,9 @@ function init() {
     G.customKPIs = [...ACCOUNTING_DEFAULT_KPIS];
     saveG();
   }
+
+  // ── Auto-rotate the daily KPI task if the date has changed ──
+  checkDailyKPITask();
 
   document.getElementById('date-display').textContent =
     new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
